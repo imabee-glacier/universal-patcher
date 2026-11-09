@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="650" viewBox="0 0 720 650" fill="none">
+<defs>
+ <linearGradient id="base" x1="160" y1="410" x2="500" y2="580" gradientUnits="userSpaceOnUse"><stop stop-color="#a8b5a1"/><stop offset="1" stop-color="#829d8a"/></linearGradient>
+ <linearGradient id="lawn" x1="160" y1="240" x2="530" y2="510" gradientUnits="userSpaceOnUse"><stop stop-color="#d2ddba"/><stop offset="1" stop-color="#aec8a2"/></linearGradient>
+ <linearGradient id="water" x1="420" y1="375" x2="530" y2="470" gradientUnits="userSpaceOnUse"><stop stop-color="#77bbb1"/><stop offset="1" stop-color="#afddd2"/></linearGradient>
+ <linearGradient id="roof" x1="230" y1="220" x2="390" y2="310" gradientUnits="userSpaceOnUse"><stop stop-color="#437e70"/><stop offset="1" stop-color="#205346"/></linearGradient>
+ <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8cae80"/><stop offset="1" stop-color="#46755c"/></linearGradient>
+ <linearGradient id="gem" x1="350" y1="80" x2="400" y2="180" gradientUnits="userSpaceOnUse"><stop stop-color="#b9dc9b"/><stop offset="1" stop-color="#488e6e"/></linearGradient>
+ <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%"><feGaussianBlur stdDeviation="15"/></filter>
+ <filter id="soft" x="-30%" y="-30%" width="160%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
+ <pattern id="rooflines" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><path d="M0 0V12" stroke="#abc2aa" stroke-opacity=".16" stroke-width="1"/></pattern>
+ <g id="tree"><ellipse cx="0" cy="12" rx="26" ry="11" fill="#4e7154" opacity=".13"/><path d="M0 14V-54" stroke="#7c7b5b" stroke-width="5"/><path d="m0-15-13-15m13 2 12-14" stroke="#7c7b5b" stroke-width="3"/><path d="M-28-43c-9-15 1-27 13-28-4-19 18-30 31-18 15-2 26 15 19 28 17 19 1 37-16 35-12 9-37 2-47-17Z" fill="url(#leaf)"/><path d="M-15-71c0-12 14-22 26-17 11 4 9 19 2 24-11 7-24 4-28-7Z" fill="#a6bd8c" opacity=".6"/><path d="M-18-46c-8-8-6-17-3-21" stroke="#c4d3a6" stroke-opacity=".35" stroke-width="3" stroke-linecap="round"/></g>
+ <g id="shrub"><ellipse cx="0" cy="2" rx="22" ry="8" fill="#517952" opacity=".12"/><ellipse cx="-8" cy="-9" rx="13" ry="12" fill="#769767"/><ellipse cx="7" cy="-10" rx="15" ry="15" fill="#8cab78"/><ellipse cx="6" cy="-17" rx="9" ry="7" fill="#abc08c"/></g>
+ <g id="window"><path d="M0 0 32 18v39L0 39Z" fill="#356c62"/><path d="m3 4 26 15v32L3 36Z" fill="#a6c8bc"/><path d="m16 10 0 38M2 22l28 16" stroke="#faf6e7" stroke-width="3"/><path d="m3 4 9 5v33l-9-6Z" fill="#e5e8d5" opacity=".3"/><path d="m-3 39 36 20v4L-3 43Z" fill="#d0ccb5"/></g>
+</defs>
+<ellipse cx="371" cy="535" rx="226" ry="44" fill="#48644f" opacity=".14" filter="url(#shadow)"/>
+<!-- A hand-built little world: all original vector artwork. -->
+<path d="m95 365 255-149 287 165v34L382 565 95 399Z" fill="url(#base)"/>
+<path d="m95 365 287 166 255-150-287-165Z" fill="url(#lawn)"/>
+<path d="M95 365v34l287 166v-34Z" fill="#bec7ad"/>
+<path d="m382 531 255-150v34L382 565Z" fill="#91aa90"/>
+<path d="m95 365 287 166 255-150" stroke="#e7e8d2" stroke-width="3"/>
+<!-- Stepping paths and garden beds -->
+<path d="m192 377 37-21 191 110-38 22Z" fill="#e5dfc8"/>
+<path d="m284 395 20-12 110 64-20 12Z" fill="#f6efdc"/>
+<path d="m300 407 14-8m3 18 15-8m3 18 15-8m3 18 15-8m3 18 15-8" stroke="#d2ccb8" stroke-width="2"/>
+<path d="m134 366 52-30 38 22-52 30Z" fill="#8ba776"/>
+<path d="m149 366 36-21 23 13-36 21Z" fill="#727e54"/>
+<g fill="#e6d8a8"><circle cx="162" cy="361" r="4"/><circle cx="174" cy="354" r="3"/><circle cx="185" cy="363" r="4"/><circle cx="174" cy="371" r="3"/></g>
+<g fill="#c7b3a0"><circle cx="181" cy="353" r="3"/><circle cx="192" cy="360" r="3"/><circle cx="164" cy="368" r="3"/></g>
+<!-- Pool, coping and water -->
+<path d="m397 414 86-50 104 60-86 51Z" fill="#96ac9a" opacity=".35"/>
+<path d="m393 402 87-50 108 62-87 51Z" fill="#f5edda"/>
+<path d="m405 403 75-43 95 54-75 44Z" fill="#568c80"/>
+<path d="m405 409 75-43 86 49-66 38Z" fill="url(#water)"/>
+<path d="m421 414 59-34 70 40m-110 3 40-23 51 29m-70 6 19-11 30 18" stroke="#e4f3dc" stroke-opacity=".5" stroke-width="1.5"/>
+<path d="m393 402 108 63v6l-108-63Z" fill="#d6d2bc"/><path d="m501 465 87-51v6l-87 51Z" fill="#b7c5af"/>
+<path d="M524 399v-11c0-7 8-8 8-1v16m-8-8 8 5" stroke="#edf2de" stroke-width="2.5"/>
+<!-- House shadow and stone foundation -->
+<path d="m233 368 128-75 123 72-130 76Z" fill="#44624a" opacity=".13" filter="url(#soft)"/>
+<path d="m211 347 125-73 120 70v21l-125 74-120-71Z" fill="#b6b5a0"/>
+<path d="m205 347 131-77 126 73-131 77Z" fill="#f0e9d4"/>
+<!-- Main walls -->
+<path d="M220 257 336 190v157l-116 68Z" fill="#d7d8bf"/>
+<path d="m220 257 111 64v94l-111-64Z" fill="#f6edda"/>
+<path d="m331 321 116-68v94l-116 68Z" fill="#d6dbc1"/>
+<!-- Upper gable -->
+<path d="m220 257 55-83 56 147Z" fill="#f6edda"/>
+<path d="m331 321-56-147 115-67 57 146Z" fill="url(#roof)"/>
+<path d="m331 321-56-147 115-67 57 146Z" fill="url(#rooflines)"/>
+<path d="m211 262 64-94 61 154" stroke="#f8f0db" stroke-width="8" stroke-linejoin="round"/>
+<path d="m336 322 118-69-60-152-119 67" stroke="#2b5f50" stroke-width="6" stroke-linejoin="round"/>
+<path d="m336 322 118-69" stroke="#174e43" stroke-width="7"/>
+<!-- Chimney -->
+<path d="m382 164 0-42 20-11 17 10v43l-19 11Z" fill="#d7d6bd"/><path d="m400 175 0-43 19-11v43Z" fill="#b3bfaa"/><path d="m378 122 22 13 23-13-22-13Z" fill="#eee6d2"/><path d="m387 122 13 7 13-7-13-7Z" fill="#6d8070"/>
+<!-- Warm windows -->
+<use href="#window" transform="translate(236 285)"/>
+<use href="#window" transform="translate(287 315)"/>
+<path d="m264 235 20 11v27l-20-11Z" fill="#91b7a5" stroke="#d9d7ba" stroke-width="3"/><path d="m274 241 0 27m-10-20 20 11" stroke="#f8f0da" stroke-width="2"/>
+<path d="m354 325 29-17v59l-29 17Z" fill="#638776"/><path d="m359 329 19-11v26l-19 11Z" fill="#b1cabc"/><path d="m376 353 0 6" stroke="#ece5cf" stroke-width="2"/>
+<path d="m399 297 31-18v38l-31 18Z" fill="#84ac99" stroke="#f5edd9" stroke-width="3"/><path d="m414 288 0 39m-15-10 31-18" stroke="#f5edd9" stroke-width="3"/>
+<!-- Front stoop -->
+<path d="m347 387 43-25 17 10-44 25Z" fill="#eae1ca"/><path d="m347 387 16 10v7l-16-10Z" fill="#c7c6ad"/><path d="m363 397 44-25v7l-44 25Z" fill="#b2c1aa"/>
+<path d="m349 401 52-30 12 7-52 30Z" fill="#eee5cd"/>
+<!-- Lawn furniture -->
+<path d="m469 330 29-17 28 16-29 17Z" fill="#e7ddbf"/><path d="m475 333 0 16m23-9 0 16m21-22 0 15" stroke="#a69d80" stroke-width="3"/>
+<path d="M497 326v-64" stroke="#c0b492" stroke-width="3"/>
+<path d="m451 285 46-33 48 33-48 20Z" fill="#f0e6c7"/><path d="m451 285 46-33 0 53Z" fill="#d8d3b6"/><path d="m497 252 48 33-29 5Z" fill="#fcf1d5"/><path d="m451 285 0 5 46 20 48-20v-5l-48 20Z" fill="#c9c8aa"/>
+<path d="m461 342 10-6 12 7-10 6Z" fill="#658b75"/><path d="m463 343 0 13m17-11v13" stroke="#8a9374" stroke-width="2"/>
+<path d="m510 350 11-6 13 7-11 6Z" fill="#658b75"/><path d="m512 351 0 13m19-10v13" stroke="#8a9374" stroke-width="2"/>
+<!-- Trees framing the miniature -->
+<use href="#tree" transform="translate(190 307) scale(.95)"/>
+<use href="#tree" transform="translate(563 372) scale(1.12)"/>
+<use href="#tree" transform="translate(326 474) scale(.8)"/>
+<use href="#shrub" transform="translate(228 398) scale(.8)"/>
+<use href="#shrub" transform="translate(254 414) scale(.7)"/>
+<use href="#shrub" transform="translate(530 473) scale(.7)"/>
+<use href="#shrub" transform="translate(407 297) scale(.6)"/>
+<!-- Garden lights -->
+<g stroke="#576f58" stroke-width="2"><path d="M382 481v-16m-5 0h10M207 388v-16m-5 0h10"/></g><g fill="#f2e4b9"><rect x="378" y="461" width="8" height="7" rx="2"/><rect x="203" y="368" width="8" height="7" rx="2"/></g>
+<!-- Signature floating crystal -->
+<ellipse cx="322" cy="192" rx="24" ry="7" fill="#235843" opacity=".1" filter="url(#soft)"/>
+<path d="m322 46 27 49-27 49-27-49Z" fill="url(#gem)"/><path d="m322 46 0 98-27-49Z" fill="#75ac7b"/><path d="m322 46 27 49-27-9Z" fill="#d0e6af"/><path d="m322 86 27 9-27 49Z" fill="#377e60"/><path d="m322 46-27 49 27-9Z" fill="#9bc88c"/><path d="m322 46 0 40" stroke="#e2efc6" stroke-opacity=".6"/>
+<!-- Sparse botanical details -->
+<g stroke="#82a078" stroke-width="1.5" stroke-linecap="round"><path d="m159 389 0-9m0 9-5-5m5 5 5-6M287 456v-9m0 9-5-5m5 5 5-6M574 414v-9m0 9-5-5m5 5 5-6"/></g>
+</svg>

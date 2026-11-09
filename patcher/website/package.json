@@ -1,0 +1,12 @@
+{
+  "name": "universal-patcher-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preview": "python3 -m http.server 4173 --bind 127.0.0.1",
+    "test": "node --test tests/website.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

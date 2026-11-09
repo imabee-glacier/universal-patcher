@@ -1,0 +1,8 @@
+# Files a promotion, renewal or health check replaces in place.
++ /metadata/timestamp.json
++ /app/metadata/timestamp.json
++ /app/bootstrap/latest
++ /install.sh
++ /install.ps1
++ /site/data/catalog.json
+- **

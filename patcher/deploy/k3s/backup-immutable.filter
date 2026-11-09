@@ -1,0 +1,13 @@
+# Files that never change at their path once published.
+- .*
+- .*/**
+- **/.*
+- **/.*/**
+- **/publish.lock
+- /metadata/timestamp.json
+- /app/metadata/timestamp.json
+- /app/bootstrap/latest
+- /install.sh
+- /install.ps1
+- /site/**
++ **

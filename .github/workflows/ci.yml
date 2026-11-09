@@ -1,0 +1,174 @@
+# Checks every change; on main, also publishes the front and CLI images to ghcr.io, pinned by
+# digest in the job summary. Third-party actions are pinned to commit SHAs.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: patcher
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  rust-windows:
+    runs-on: windows-2025
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - run: cargo test --locked
+
+  site-and-config:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: {node-version: "24"}
+      - name: Website tests
+        working-directory: patcher/website
+        run: npm ci --no-audit --no-fund && npm test
+      - name: Shell scripts
+        run: shellcheck distribution/install.sh tools/*.sh
+      - name: Kubernetes manifests
+        run: |
+          docker run --rm -v "$PWD/deploy/k3s:/k3s:ro" \
+            registry.k8s.io/kubectl:v1.34.1@sha256:59bafa07ff3a6d4b417e7633ddb9d79a9606ca98bf64bac080b3e65748669250 \
+            kustomize /k3s > "$RUNNER_TEMP/rendered.yaml"
+          { cat "$RUNNER_TEMP/rendered.yaml"; echo '---'; cat deploy/k3s/publish-app.yaml; } |
+            docker run --rm -i \
+            ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c \
+            -strict -summary -kubernetes-version 1.34.1 -skip NetworkAttachmentDefinition -
+      - name: Front configuration
+        run: |
+          docker build -q -f deploy/front/Dockerfile -t patcher-front:ci .
+          docker run --rm -e PATCHER_DOMAIN=downloads.example.org patcher-front:ci \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  flutter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - run: tools/install-flutter.sh
+      - working-directory: patcher/app
+        run: ../.tools/flutter/bin/flutter analyze && ../.tools/flutter/bin/flutter test
+
+  # Release build, publish, HTTPS + HTTP/3 front, `curl | bash` install, tamper refusal,
+  # front checks and a browser pass over the website.
+  e2e:
+    needs: [rust, flutter]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev
+      - run: tools/install-flutter.sh
+      - run: tools/e2e-install.sh
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-screenshots
+          path: patcher/runtime/site-check/
+          if-no-files-found: ignore
+
+  windows-build:
+    needs: rust-windows
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: patcher
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Install Flutter 3.47.9 (checksum verified)
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'flutter.zip'
+          Invoke-WebRequest -UseBasicParsing 'https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.9-stable.zip' -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($hash -ne 'd8e2b5977e09082c6440f89dc1aa887b94c8fbcc3b39222797046295a3f68a9e') { throw "Flutter archive checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          "$env:RUNNER_TEMP\flutter\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Build
+        working-directory: patcher/app
+        run: flutter build windows --release
+      - name: Bundle contents
+        working-directory: patcher/app/build/windows/x64/runner/Release
+        run: |
+          foreach ($f in 'patcher.exe', 'patcher_core.dll', 'patcher-engine.exe') {
+            if (-not (Test-Path $f)) { throw "Bundle is missing $f" }
+          }
+          & .\patcher-engine.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Engine did not start' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-x64-bundle
+          path: patcher/app/build/windows/x64/runner/Release/
+
+  images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [rust, site-and-config, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image:
+          - {name: patcher-front, file: deploy/front/Dockerfile}
+          - {name: patcher-cli, file: deploy/Dockerfile}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: patcher
+          file: patcher/${{ matrix.image.file }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/imabee-glacier/${{ matrix.image.name }}:${{ github.sha }}
+            ghcr.io/imabee-glacier/${{ matrix.image.name }}:main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Digest
+        run: echo "ghcr.io/imabee-glacier/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

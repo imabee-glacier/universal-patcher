@@ -1,0 +1,23 @@
+# Applied on appsynergy-server with `kubectl apply -k deploy/k3s` after tools/deploy-preflight.sh
+# passes. Images are pinned by digest; CI publishes them (deploy/README.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - storage.yaml
+  - site.yaml
+  - front.yaml
+  - jobs.yaml
+configMapGenerator:
+  - name: backup-filters
+    namespace: universal-patcher
+    files:
+      - immutable.filter=backup-immutable.filter
+      - mutable.filter=backup-mutable.filter
+images:
+  - name: patcher-front
+    newName: ghcr.io/imabee-glacier/patcher-front
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: patcher-cli
+    newName: ghcr.io/imabee-glacier/patcher-cli
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

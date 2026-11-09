@@ -1,0 +1,4 @@
+# Not part of the program: third-party reconstructions, local backups, source archives.
+/ast-map/
+/backups/
+*.zip

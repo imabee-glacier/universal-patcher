@@ -1,0 +1,80 @@
+# Local volumes on appsynergy-server, under /var/lib/appsynergy/volumes. Nothing chowns at
+# startup and no Pod sets fsGroup: create each directory owned by the uid that writes it
+# (deploy/README.md, "First deployment").
+#
+# patcher-repository (uid 65532): the published repositories, install scripts and website data.
+#   The front mounts it read-only; only the jobs write. 250 GiB is an estimate, not a measurement.
+# patcher-caddy (uid 1000): the front's Let's Encrypt account and certificate. It must persist:
+#   an ephemeral volume re-issues on every restart, and Let's Encrypt allows five duplicates a week.
+# patcher-staging (uid 65532): packaged builds waiting for publish-app. Read-only to the job.
+apiVersion: v1
+kind: PersistentVolume
+metadata: {name: patcher-repository}
+spec:
+  capacity: {storage: 250Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  local: {path: /var/lib/appsynergy/volumes/patcher-repository/_data}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [appsynergy-server]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: patcher-repository, namespace: universal-patcher}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: patcher-repository
+  resources: {requests: {storage: 250Gi}}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata: {name: patcher-caddy}
+spec:
+  capacity: {storage: 1Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  local: {path: /var/lib/appsynergy/volumes/patcher-caddy/_data}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [appsynergy-server]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: patcher-caddy, namespace: universal-patcher}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: patcher-caddy
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata: {name: patcher-staging}
+spec:
+  capacity: {storage: 20Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  local: {path: /var/lib/appsynergy/volumes/patcher-staging/_data}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [appsynergy-server]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: patcher-staging, namespace: universal-patcher}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: patcher-staging
+  resources: {requests: {storage: 20Gi}}
