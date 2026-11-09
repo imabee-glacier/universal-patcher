@@ -18,6 +18,7 @@ the internet, and no signing keys in the public Pod.
 | `k3s/front.yaml` | The front Deployment. |
 | `k3s/jobs.yaml` | `renew-metadata` (6-hourly, the only holder of signing keys), `check-expiry` (hourly, fails 12 h before any role expires), `check-health` (every 5 minutes, writes the status the website shows), `backup-repository` (daily rclone copy of everything published). |
 | `k3s/publish-app.yaml` | On-demand Job that publishes the patcher release waiting in staging. |
+| `host/` | The patcher's own host configuration: `patcher-guard.nft` and `patcher-guard.service` (ingress guard for the front's address) and the `br-pub` route drop-in. Installed by `../tools/install-host.sh`. |
 | `../tools/deploy-preflight.sh` | Stops before deploy while placeholders remain, DNS or CAA disagree, the firewall declaration is missing, or an image is not pinned. |
 | `../tools/front-check.sh` | Checks a running front from outside: protocols, TLS versions, headers, caching, Range resume, methods other than GET and HEAD, and hidden paths. |
 | `../tools/site-browser-check.sh` | Loads the website in Chromium and fails on any CSP violation or script error. |
@@ -55,17 +56,18 @@ routes to this host; never `.128` and above).
 1. **Reserve the address** in the control plane before any DNS record exists
    (`POST /platform/public-ips/{id}/reserve-infrastructure`). An unreserved address with a live
    name is one a customer could claim and get a certificate for.
-2. **Declare it** in appsynergy-rs `ops/netpolicy/exposure.toml` as a new `[[stack]]` with
-   `names = ["<domain>"]` and exactly `80/tcp` (ACME HTTP-01 and redirect), `443/tcp` and
-   `443/udp` (HTTP/3). Re-render with `python3 ops/netpolicy/render.py`, merge, and reload
-   `appsynergy-netguard.service` on the host.
+2. **Guard and route it** with this repository's own host configuration: set the address in
+   `host/patcher-guard.nft` (only `80/tcp` for Let's Encrypt and the redirect, `443/tcp` and
+   `443/udp` for HTTP/3) and in `host/30-br-pub.network.d/patcher-front.conf`, then run
+   `tools/install-host.sh`. It installs `patcher-guard.service` (its own nftables table,
+   `inet patcher_guard`) and a drop-in route for `br-pub`; no other project's file is changed.
 3. **DNS**: an `A` record for the domain to the address, no `AAAA` (the front has no IPv6
    address), and `CAA 0 issue "letsencrypt.org"`.
 4. **Fill in** `k3s/site.yaml` (address in `rangeStart` and `rangeEnd`, `PATCHER_DOMAIN`,
    `PATCHER_ORIGIN`) and pin both images by the digests CI printed:
    `kustomize edit set image patcher-front=ghcr.io/imabee-glacier/patcher-front@sha256:<digest>`
    (same for `patcher-cli`, and in `publish-app.yaml`).
-5. `tools/deploy-preflight.sh <appsynergy-rs checkout>` must pass.
+5. `tools/deploy-preflight.sh` must pass.
 6. Create the patcher release keys on a workstation, never on the server:
    `patcher init-root <dir>` writes `root-key.pem` (signs only `root.json`; move it to offline
    storage), `online-key.pem` (the only key the cluster receives) and `root.json` (public; also
@@ -97,8 +99,8 @@ routes to this host; never `.128` and above).
    tools/site-browser-check.sh https://<domain>/
    ```
 
-   and from the appsynergy-rs checkout, `ops/netpolicy/verify.py` (only the declared ports
-   answer) and `ops/netpolicy/dnscheck.py`.
+   and scan the address from off the host; only 80 and 443 may answer:
+   `sudo nmap -Pn -sS -p 1-1024,3000,8080,8443,9090 <address>`.
 
 ## Publishing a patcher release
 
@@ -136,13 +138,11 @@ build, or a Windows installer has no Windows build. The website's
 
 ## Not verified
 
-- Nothing has been applied to appsynergy-server. The domain and address are not chosen.
-- Let's Encrypt issuance and renewal against the real domain, HTTP/3 through the host's
-  firewall, and the netguard rules for the new address.
+- Let's Encrypt renewal (issuance for play.imabee.com worked; renewal is due about 60 days on).
 - Public throughput, resume over the internet, disk use and request load.
 - Backup restoration and key recovery; both must be exercised before relying on the backups.
-- Kubernetes NetworkPolicy is not enforced on this kernel (see appsynergy-rs `ops/DEPLOY.md`),
-  so in-cluster isolation rests on the host firewall and on the front serving files only.
+- Kubernetes NetworkPolicy is not enforced on this host's kernel, so in-cluster isolation rests
+  on the host guard and on the front serving files only.
 - HSTS omits `includeSubDomains` and `preload` until it is known that every subdomain of the
   chosen domain serves HTTPS.
 - Encrypted Client Hello is not enabled; it needs DNS `HTTPS` records managed by Caddy.

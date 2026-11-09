@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Refuses a deployment whose identifying values are not settled. Run from the patcher/ directory
-# before `kubectl apply -k deploy/k3s`:
-#   tools/deploy-preflight.sh <path to an appsynergy-rs checkout>
+# Refuses a deployment whose identifying values are not settled. Run before
+# `kubectl apply -k deploy/k3s`:
+#   tools/deploy-preflight.sh
 # Checks: placeholders replaced, the address is in the routed public block, DNS points the domain
-# at it, CAA (if published) allows Let's Encrypt, exposure.toml declares exactly the front's
-# ports for it, and every image is pinned to a real digest.
+# at it, CAA (if published) allows Let's Encrypt, our host guard (deploy/host) allows exactly the
+# front's ports for it and routes it, and every image is pinned to a real digest.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-exposure="${1:?usage: deploy-preflight.sh <appsynergy-rs checkout>}/ops/netpolicy/exposure.toml"
 k3s="$here/deploy/k3s"
 failures=0
 fail() { printf 'FAIL  %s\n' "$1"; failures=$((failures + 1)); }
@@ -46,19 +45,15 @@ else
     fail "CAA at $caa_at does not allow letsencrypt.org"
 fi
 
-if python3 - "$exposure" "$start" "$domain" <<'EOF'; then
-import sys, tomllib
-spec = tomllib.load(open(sys.argv[1], "rb"))
-stacks = [s for s in spec["stack"] if s.get("address") == sys.argv[2]]
-assert len(stacks) == 1, f"{len(stacks)} stacks hold {sys.argv[2]}"
-ports = sorted((a["proto"], a["port"]) for a in stacks[0]["allow"])
-assert ports == [("tcp", 80), ("tcp", 443), ("udp", 443)], ports
-assert sys.argv[3] in stacks[0]["names"], stacks[0]["names"]
-EOF
-    pass "exposure.toml declares 80/tcp, 443/tcp, 443/udp for $start"
+guard="$here/deploy/host/patcher-guard.nft"
+route="$here/deploy/host/30-br-pub.network.d/patcher-front.conf"
+allowed="$(grep -oE '(tcp|udp) dport [0-9]+ return' "$guard" | awk '{print $1"/"$3}' | sort | tr '\n' ' ')"
+if grep -qE "ip daddr $start jump front$" "$guard" && [ "$allowed" = "tcp/443 tcp/80 udp/443 " ]; then
+    pass "host guard allows only 80/tcp, 443/tcp, 443/udp to $start"
 else
-    fail "exposure.toml does not declare the front correctly"
+    fail "host guard does not cover $start with exactly 80/tcp, 443/tcp, 443/udp (found: $allowed)"
 fi
+if grep -qx "Destination=$start/32" "$route"; then pass "br-pub route for $start/32"; else fail "no br-pub route for $start/32"; fi
 
 zero="sha256:0000000000000000000000000000000000000000000000000000000000000000"
 if grep -q "$zero" "$k3s/kustomization.yaml" "$k3s/publish-app.yaml"; then fail "an image is not pinned to a published digest"; else pass "images pinned"; fi

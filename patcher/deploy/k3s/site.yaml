@@ -3,9 +3,8 @@
 #
 # Address: a free /32 in 64.112.14.0/25, reserved first in the control plane
 # (POST /platform/public-ips/{id}/reserve-infrastructure) and only then given a DNS record, so
-# no customer can claim it and obtain a certificate for the name. It also needs a [[stack]]
-# entry in appsynergy-rs ops/netpolicy/exposure.toml and a host route:
-#   ip route replace <address>/32 dev br-pub
+# no customer can claim it and obtain a certificate for the name. The same address goes in
+# deploy/host (the ingress guard and the br-pub route), installed with tools/install-host.sh.
 #
 # `.spec.config` is JSON: a comment inside it is a parse error and Multus then refuses every
 # sandbox on the attachment. Half-defaults rather than 0.0.0.0/0 make the public path win over
