@@ -1,5 +1,5 @@
-Built and signed through the release pipeline: GitHub builds each platform, and the release is published and served only from play.imabee.com.
+Universal Patcher is offered only where The Sims 4 runs: Windows and Linux on x64 computers, and macOS on Intel and Apple silicon. The installers say so plainly on anything else.
 
-The website now detects your processor architecture when your browser reports it.
+The website shows your download right away on Windows and Linux; only a Mac is asked whether it is Intel or Apple silicon.
 
-Windows: file flushes, journal recovery and corruption detection fixed on NTFS.
+Windows: saving files, recovering an interrupted update and detecting damaged files now work on Windows disks. The Windows build is included for testing and is not yet offered as verified.

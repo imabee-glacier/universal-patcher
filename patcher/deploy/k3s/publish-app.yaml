@@ -36,7 +36,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: publish
-          image: ghcr.io/imabee-glacier/patcher-cli@sha256:e8239499d4cdf7d80cbb634b12372aa6398ddfcce945b8b2989033bd6f78cdad
+          image: ghcr.io/imabee-glacier/patcher-cli@sha256:521d6aa6a57baff1a19611361fb4190e235818620f240d046af7ae61e9c9f492
           command: ["/bin/sh", "-ec"]
           args:
             - |

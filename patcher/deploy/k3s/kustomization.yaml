@@ -17,7 +17,7 @@ configMapGenerator:
 images:
   - name: patcher-front
     newName: ghcr.io/imabee-glacier/patcher-front
-    digest: sha256:21fbdbcb6973d45e490a6ca14144583846c153e4ba31a8e05aa4341e78dbb5c3
+    digest: sha256:22ba84ac799c5eebe2d9bb73a12f3620ee73c759dc6ef22492b9df47929460a4
   - name: patcher-cli
     newName: ghcr.io/imabee-glacier/patcher-cli
-    digest: sha256:e8239499d4cdf7d80cbb634b12372aa6398ddfcce945b8b2989033bd6f78cdad
+    digest: sha256:521d6aa6a57baff1a19611361fb4190e235818620f240d046af7ae61e9c9f492
