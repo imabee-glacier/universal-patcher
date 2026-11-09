@@ -18,14 +18,20 @@ mkdir -p "$work/repo" "$work/caddy"
 echo "== front image, local test CA"
 docker build -q -f "$here/deploy/front/Dockerfile" -t patcher-front:e2e "$here" >/dev/null
 docker rm -f up-e2e >/dev/null 2>&1 || true
+# Runs as the invoking user so the test CA lands in a directory that user owns.
 docker run -d --name up-e2e --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
-    --security-opt no-new-privileges --tmpfs /config:uid=1000 \
+    --user "$(id -u):$(id -g)" --security-opt no-new-privileges --tmpfs "/config:uid=$(id -u)" \
     -e PATCHER_DOMAIN=localhost -e PATCHER_TLS_MODE=internal \
     -p "127.0.0.1:${port}:443/tcp" -p "127.0.0.1:${port}:443/udp" -p "127.0.0.1:${http_port}:80" \
     -v "$work/caddy:/data" -v "$work/repo:/srv/repository:ro" patcher-front:e2e >/dev/null
 trap 'docker rm -f up-e2e >/dev/null 2>&1 || true' EXIT
 ca="$work/caddy/caddy/pki/authorities/local/root.crt"
 for _ in $(seq 50); do [ -s "$ca" ] && break; sleep 0.2; done
+if [ ! -s "$ca" ]; then
+    docker logs up-e2e >&2
+    echo "front did not create its test CA" >&2
+    exit 1
+fi
 cat /etc/ssl/certs/ca-certificates.crt "$ca" > "$work/trust.pem"
 export SSL_CERT_FILE="$work/trust.pem"
 cargo build --quiet --manifest-path "$here/Cargo.toml" --bin patcher

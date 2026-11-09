@@ -169,8 +169,21 @@ impl Root {
     }
 }
 
+/// Flushes `dir`'s entries to disk. Windows flushes only through a directory handle opened
+/// with write access and backup semantics.
 fn sync(dir: &Dir) -> Result<()> {
-    dir.open(".")?.into_std().sync_all()?;
+    #[cfg(windows)]
+    let handle = {
+        use cap_std::fs::{OpenOptions, OpenOptionsExt};
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .custom_flags(crate::storage::FILE_FLAG_BACKUP_SEMANTICS);
+        dir.open_with(".", &options)?
+    };
+    #[cfg(not(windows))]
+    let handle = dir.open(".")?;
+    handle.into_std().sync_all()?;
     Ok(())
 }
 

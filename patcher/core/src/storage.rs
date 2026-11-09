@@ -47,9 +47,36 @@ impl Write for HashWriter {
 pub fn hash_file(path: &Path) -> Result<(String, u64)> {
     hash_reader(File::open(path)?)
 }
+/// Opens a directory with the `FILE_FLAG_BACKUP_SEMANTICS` Windows requires for directory handles.
+#[cfg(windows)]
+pub(crate) const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+/// Flushes a directory's entries to disk, after a rename or create inside it.
+/// Windows flushes only through a handle with write access.
 pub fn sync_dir(path: &Path) -> Result<()> {
-    File::open(path)?.sync_all()?;
-    Ok(())
+    #[cfg(windows)]
+    let dir = {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?
+    };
+    #[cfg(not(windows))]
+    let dir = File::open(path)?;
+    dir.sync_all()
+        .with_context(|| format!("Flushing directory {}", path.display()))
+}
+
+/// Flushes a file's data and metadata to disk. Windows flushes only through a handle with
+/// write access.
+pub fn sync_file(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    let file = fs::OpenOptions::new().write(true).open(path)?;
+    #[cfg(not(windows))]
+    let file = File::open(path)?;
+    file.sync_all()
+        .with_context(|| format!("Flushing {}", path.display()))
 }
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("Missing parent directory")?;

@@ -360,7 +360,7 @@ fn sync_tree(dir: &Path) -> Result<()> {
         if kind.is_dir() {
             sync_tree(&entry.path())?;
         } else if kind.is_file() {
-            File::open(entry.path())?.sync_all()?;
+            crate::storage::sync_file(&entry.path())?;
         }
     }
     sync_dir(dir)
@@ -418,7 +418,7 @@ fn install_launcher(layout: &Layout, v: &str) -> Result<()> {
     fs::create_dir_all(bin)?;
     let fresh = bin.join(".launcher.new");
     fs::copy(engine_executable(&layout.version(v)), &fresh)?;
-    File::open(&fresh)?.sync_all()?;
+    crate::storage::sync_file(&fresh)?;
     if cfg!(windows) && launcher.exists() {
         // A running executable cannot be replaced on Windows, but it can be renamed.
         let old = bin.join("universal-patcher.old.exe");
