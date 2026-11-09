@@ -2,7 +2,7 @@
 use crate::storage::{atomic_write, checked_bytes, read_checked};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs::Metadata, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 /// Maximum age of a cached hash before the file must be read again.
 pub const MAX_AGE_SECONDS: i64 = 30 * 24 * 60 * 60;
@@ -21,7 +21,7 @@ pub struct Stamp {
 
 impl Stamp {
     #[cfg(unix)]
-    pub fn of(m: &Metadata) -> Self {
+    pub fn of(m: &std::fs::Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
         let ns = |s: i64, n: i64| s.saturating_mul(1_000_000_000).saturating_add(n);
         Self {
@@ -34,21 +34,49 @@ impl Stamp {
         }
     }
 
-    #[cfg(not(unix))]
-    pub fn of(m: &Metadata) -> Self {
-        let ns = m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(-1, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX));
-        Self {
-            size: m.len(),
-            modified_ns: ns,
-            changed_ns: ns,
-            inode: 0,
-            device: 0,
+    /// The stamp of an open file. On Windows the change time and file identity come from the
+    /// handle: NTFS updates ChangeTime on every content write, even when the last-write time is
+    /// set back, which plain metadata cannot show.
+    #[cfg(unix)]
+    pub fn of_file(f: &std::fs::File) -> std::io::Result<Self> {
+        Ok(Self::of(&f.metadata()?))
+    }
+
+    #[cfg(windows)]
+    pub fn of_file(f: &std::fs::File) -> std::io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandle,
+            GetFileInformationByHandleEx,
+        };
+        let handle = f.as_raw_handle();
+        // SAFETY: both structs are plain data; the handle is valid for the lifetime of `f`, and
+        // each call writes at most the size it is given.
+        let (basic, identity) = unsafe {
+            let mut basic: FILE_BASIC_INFO = std::mem::zeroed();
+            if GetFileInformationByHandleEx(
+                handle,
+                FileBasicInfo,
+                (&raw mut basic).cast(),
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut identity: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+            if GetFileInformationByHandle(handle, &mut identity) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            (basic, identity)
+        };
+        Ok(Self {
+            size: f.metadata()?.len(),
+            modified_ns: basic.LastWriteTime,
+            changed_ns: basic.ChangeTime,
+            inode: (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow),
+            device: u64::from(identity.dwVolumeSerialNumber),
             mode: 0,
-        }
+        })
     }
 
     pub fn executable(&self) -> bool {
