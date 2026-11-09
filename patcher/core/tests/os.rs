@@ -120,9 +120,10 @@ fn windows_probe_finds_ea_app_and_extra_steam_libraries() {
     std::fs::create_dir_all(pf86.join("Steam/steamapps")).unwrap();
     std::fs::write(
         pf86.join("Steam/steamapps/libraryfolders.vdf"),
+        // Steam escapes backslashes in Windows paths, as in "D:\\SteamLibrary".
         format!(
             "\"libraryfolders\" {{ \"1\" {{ \"path\" \"{}\" }} }}",
-            library.display()
+            library.display().to_string().replace('\\', "\\\\")
         ),
     )
     .unwrap();
