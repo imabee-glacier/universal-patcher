@@ -613,7 +613,9 @@ pub fn run(
         manifest_hash: release.digest().into(),
     });
     policy.save(state)?;
-    // Compact only after the policy is durable. An interrupted compaction is harmless.
+    // Compact only after the policy is durable. An interrupted compaction is harmless. The
+    // journal is closed first: Windows refuses to replace a file that is still open.
+    drop(journal);
     storage::atomic_write(&state.join("journal.jsonl"), b"")?;
     progress(Progress {
         phase: "ready".into(),
