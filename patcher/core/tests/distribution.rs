@@ -574,3 +574,47 @@ fn production_root_keeps_the_root_key_out_of_publishing() {
     ok(&env.cli(&["install"]));
     assert_eq!(env.state().current.as_deref(), Some("1.0.0"));
 }
+
+#[test]
+fn only_platforms_the_game_runs_on_are_packaged_or_accepted() {
+    use patcher_core::model::{AppManifest, game_runs_on};
+    for (os, arch) in [
+        ("windows", "x64"),
+        ("linux", "x64"),
+        ("macos", "x64"),
+        ("macos", "arm64"),
+    ] {
+        assert!(game_runs_on(os, arch), "{os}-{arch}");
+    }
+    for (os, arch) in [
+        ("linux", "arm64"),
+        ("windows", "arm64"),
+        ("linux", "x86"),
+        ("freebsd", "x64"),
+    ] {
+        assert!(!game_runs_on(os, arch), "{os}-{arch}");
+    }
+
+    let t = tempfile::tempdir().unwrap();
+    let build = t.path().join("build");
+    bundle(&build, true);
+    let err =
+        distribution::package_app(&build, "1.0.0", "linux", "arm64", &t.path().join("staging"))
+            .unwrap_err()
+            .to_string();
+    assert!(err.contains("does not run on linux-arm64"), "{err}");
+    assert!(
+        !t.path().join("staging").exists(),
+        "nothing is written for a refused platform"
+    );
+
+    // A signed manifest for such a platform is refused as well.
+    distribution::package_app(&build, "1.0.0", "linux", "x64", &t.path().join("ok")).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(t.path().join("ok/app-linux-x64.json")).unwrap()).unwrap();
+    manifest["arch"] = "arm64".into();
+    let err = AppManifest::parse(&serde_json::to_vec(&manifest).unwrap())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not run on linux-arm64"), "{err}");
+}

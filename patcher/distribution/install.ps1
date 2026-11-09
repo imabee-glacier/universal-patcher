@@ -17,10 +17,14 @@ $Bootstrap = "${Origin}app/bootstrap"
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw 'Universal Patcher requires 64-bit Windows.'
 }
-$arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-    'AMD64' { 'x64' }
-    'ARM64' { 'arm64' }
-    default { throw "Unsupported architecture: $env:PROCESSOR_ARCHITECTURE" }
+# The machine's own architecture: an emulated x64 PowerShell on ARM reports AMD64 in
+# PROCESSOR_ARCHITECTURE, so ask the OS, and fall back to the variables when that is unavailable.
+$machine = try { [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() } catch { '' }
+if (-not $machine) { $machine = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE } }
+$arch = switch ($machine) {
+    { $_ -in 'X64', 'AMD64' } { 'x64' }
+    { $_ -in 'Arm64', 'ARM64' } { throw 'The Sims 4 does not run on Windows on ARM, so Universal Patcher is not offered there.' }
+    default { throw "The Sims 4 does not run on this processor ($machine), so Universal Patcher is not offered there." }
 }
 $platform = "windows-$arch"
 

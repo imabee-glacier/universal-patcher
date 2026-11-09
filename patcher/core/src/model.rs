@@ -352,6 +352,20 @@ pub struct AppManifest {
 }
 
 /// Parses `MAJOR.MINOR.PATCH` with no leading zeros.
+/// Platforms where The Sims 4 runs, and so the only ones the patcher is built for: Windows on
+/// x64, Linux on x64 (the Windows game under Proton or Wine), and macOS on Intel and Apple
+/// silicon. Neither Windows nor Linux on ARM runs the game.
+pub const GAME_PLATFORMS: [(&str, &str); 4] = [
+    ("windows", "x64"),
+    ("linux", "x64"),
+    ("macos", "x64"),
+    ("macos", "arm64"),
+];
+
+pub fn game_runs_on(os: &str, arch: &str) -> bool {
+    GAME_PLATFORMS.contains(&(os, arch))
+}
+
 pub fn parse_version(v: &str) -> Result<(u64, u64, u64)> {
     let parts: Vec<&str> = v.split('.').collect();
     ensure!(parts.len() == 3, "Version must be MAJOR.MINOR.PATCH");
@@ -383,12 +397,10 @@ impl AppManifest {
         ensure!(self.schema == 1, "Unsupported application manifest schema");
         parse_version(&self.app_version)?;
         ensure!(
-            ["linux", "macos", "windows"].contains(&self.os.as_str()),
-            "Unsupported operating system"
-        );
-        ensure!(
-            ["x64", "arm64"].contains(&self.arch.as_str()),
-            "Unsupported architecture"
+            game_runs_on(&self.os, &self.arch),
+            "The Sims 4 does not run on {}-{}",
+            self.os,
+            self.arch
         );
         for cap in &self.required_capabilities {
             ensure!(

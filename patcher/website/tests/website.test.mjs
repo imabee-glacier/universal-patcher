@@ -55,7 +55,7 @@ test('all local asset URLs and in-page links resolve; IDs are unique', async () 
 });
 test('unpublished catalog never exposes a download or installer command for any selection', async () => {
   const v = await mount();
-  for (const os of ['windows', 'macos', 'linux']) for (const arch of ['x86_64', 'aarch64']) {
+  for (const [os, arch] of [['windows', 'x86_64'], ['linux', 'x86_64'], ['macos', 'x86_64'], ['macos', 'aarch64']]) {
     selectPlatform(v, os, arch);
     assert.equal(v.$('#download-link').hidden, true);
     assert.equal(v.$('#download-link').hasAttribute('href'), false);
@@ -98,6 +98,9 @@ test('catalog failure and invalid URLs fail closed', async () => {
     { catalog: { ...fixture, downloads: [{ ...fixture.downloads[0], url: 'javascript:alert(1)' }] } },
     { catalog: { ...fixture, downloads: [{ ...fixture.downloads[0], install_script: 'https://host.test/$(bad).sh' }] } },
     { catalog: { ...fixture, downloads: [...fixture.downloads, ...fixture.downloads] } },
+    // The game does not run on Linux or Windows on ARM, so a catalog listing either is rejected.
+    { catalog: { ...fixture, downloads: [{ ...fixture.downloads[0], arch: 'aarch64' }] } },
+    { catalog: { ...fixture, downloads: [{ ...fixture.downloads[0], os: 'windows', arch: 'aarch64', install_script: 'https://downloads.example.test/install.ps1' }] } },
     { catalog: { ...fixture, published_at: null } },
   ]) {
     const v = await mount(config);
@@ -108,38 +111,38 @@ test('catalog failure and invalid URLs fail closed', async () => {
     v.dom.window.close();
   }
 });
-test('browser platform is a suggestion; architecture remains unanswered', async () => {
-  const v = await mount({ platform: 'Linux x86_64' });
+test('Windows and Linux need no architecture: a detected Linux shows its download at once', async () => {
+  const v = await mount({ catalog: fixture, platform: 'Linux x86_64' });
   assert.equal(v.$('[data-os="linux"]').getAttribute('aria-pressed'), 'true');
-  assert.equal(v.$('#architecture').value, '');
-  assert.match(v.$('#platform-hint').textContent, /suggested/);
-  v.dom.window.close();
-});
-test('a reported architecture is preselected and offers the published download', async () => {
-  const v = await mount({ catalog: fixture, platform: 'Linux', hints: { architecture: 'x86', bitness: '64' } });
-  assert.equal(v.$('#architecture').value, 'x86_64');
+  assert.equal(v.$('.architecture').hidden, true);
   assert.equal(v.$('#download-link').hidden, false);
   assert.equal(v.$('#install-command').hidden, false);
-  assert.match(v.$('#platform-hint').textContent, /Linux on x64 detected/);
+  assert.match(v.$('#platform-hint').textContent, /Linux detected/);
+  assert.match(v.$('#download-state').textContent, /Linux · x64/);
+  v.$('[data-os="windows"]').click();
+  assert.equal(v.$('.architecture').hidden, true);
+  assert.equal(v.$('#unavailable-label').textContent, 'Download not yet available');
   v.dom.window.close();
 });
-test('a reported architecture with no release says so; a missing choice says what to choose', async () => {
-  const arm = await mount({ catalog: fixture, platform: 'Linux', hints: { architecture: 'arm', bitness: '64' } });
-  assert.equal(arm.$('#architecture').value, 'aarch64');
-  assert.equal(arm.$('#download-link').hidden, true);
-  assert.equal(arm.$('#unavailable-label').textContent, 'Download not yet available');
-  arm.dom.window.close();
-  const unreported = await mount({ catalog: fixture, platform: 'Linux x86_64' });
-  assert.equal(unreported.$('#architecture').value, '');
-  assert.equal(unreported.$('#unavailable-label').textContent, 'Choose your architecture');
-  unreported.dom.window.close();
+test('only a Mac is asked for its processor, and a reported one is preselected', async () => {
+  const asked = await mount({ catalog: fixture, platform: 'MacIntel' });
+  assert.equal(asked.$('.architecture').hidden, false);
+  assert.equal(asked.$('#architecture').value, '');
+  assert.equal(asked.$('#unavailable-label').textContent, 'Choose your Mac');
+  assert.match(asked.$('#platform-hint').textContent, /Choose Intel or Apple silicon/);
+  asked.dom.window.close();
+  const reported = await mount({ catalog: fixture, platform: 'macOS', hints: { architecture: 'arm', bitness: '64' } });
+  assert.equal(reported.$('#architecture').value, 'aarch64');
+  assert.match(reported.$('#platform-hint').textContent, /macOS · Apple silicon detected/);
+  assert.equal(reported.$('#unavailable-label').textContent, 'Download not yet available');
+  reported.dom.window.close();
   const none = await mount({ catalog: fixture });
   assert.equal(none.$('#unavailable-label').textContent, 'Choose your system first');
   none.dom.window.close();
 });
-test('a 32-bit or unknown report leaves the architecture to the visitor', async () => {
+test('a 32-bit or unknown report leaves the Mac choice to the visitor', async () => {
   for (const hints of [{ architecture: 'x86', bitness: '32' }, { architecture: 'riscv', bitness: '64' }]) {
-    const v = await mount({ catalog: fixture, platform: 'Linux', hints });
+    const v = await mount({ catalog: fixture, platform: 'macOS', hints });
     assert.equal(v.$('#architecture').value, '');
     v.dom.window.close();
   }
