@@ -34,8 +34,9 @@ if [ ! -s "$ca" ]; then
 fi
 cat /etc/ssl/certs/ca-certificates.crt "$ca" > "$work/trust.pem"
 export SSL_CERT_FILE="$work/trust.pem"
-cargo build --quiet --manifest-path "$here/Cargo.toml" --bin patcher
-"$here/target/debug/patcher" fixture "$work/keys" >/dev/null
+# Release profile, the same one the Flutter build uses, so dependencies compile once.
+cargo build --quiet --locked --release --manifest-path "$here/Cargo.toml" --bin patcher
+"$here/target/release/patcher" fixture "$work/keys" >/dev/null
 root="$work/keys/keys/root.json"
 key="$work/keys/keys/fixture-key.pem"
 
@@ -45,14 +46,14 @@ echo "== release build with baked origin and root"
 bundle="$here/app/build/linux/x64/release/bundle"
 
 echo "== package and publish 1.0.0"
-"$here/target/debug/patcher" package-app "$bundle" --version 1.0.0 --os linux --arch x64 \
+"$here/target/release/patcher" package-app "$bundle" --version 1.0.0 --os linux --arch x64 \
     --staging "$work/staging"
 printf 'First public test release.\n\nInstalls per user with one command.\n' > "$work/notes.txt"
-"$here/target/debug/patcher" publish-app "$work/staging" --root "$root" --key "$key" \
+"$here/target/release/patcher" publish-app "$work/staging" --root "$root" --key "$key" \
     --repository "$work/repo" --origin "$origin" --offer linux-x64 --notes "$work/notes.txt"
 
 echo "== health status through the front"
-"$here/target/debug/patcher" health --origin "$origin" --output "$work/repo/site/data/health.json"
+"$here/target/release/patcher" health --origin "$origin" --output "$work/repo/site/data/health.json"
 
 echo "== curl -fsSL ${origin}install.sh | bash"
 mkdir -p "$work/home"

@@ -1,11 +1,20 @@
 # Checks every change; on main, also publishes the front and CLI images to ghcr.io, pinned by
 # digest in the job summary. Third-party actions are pinned to commit SHAs.
+#
+# Speed comes from caching and parallelism only; every check runs on every code change.
+# - Compiled Rust dependencies are cached per job (saved from main only, so a branch can read
+#   the cache but never replace it).
+# - The Flutter SDK, Dart packages, npm packages and Docker layers are cached.
+# - Jobs do not wait for each other, except image publishing, which waits for every check.
+# - A newer push cancels the run it supersedes.
 name: ci
 
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md"]
   pull_request:
+    paths-ignore: ["**.md"]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +22,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -21,25 +30,50 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
+  # Incremental state is useless on a fresh runner and bloats the cache.
   CARGO_INCREMENTAL: "0"
+  # Panic locations and line numbers stay; full debug info only slows the build.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  rust:
+  lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
       - run: cargo fmt --all --check
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: patcher
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all-targets --locked -- -D warnings
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: patcher
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked
 
   rust-windows:
     runs-on: windows-2025
-    timeout-minutes: 50
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: patcher
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked
 
   site-and-config:
@@ -49,7 +83,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: {node-version: "24"}
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: patcher/website/package-lock.json
       - name: Website tests
         working-directory: patcher/website
         run: npm ci --no-audit --no-fund && npm test
@@ -72,10 +109,16 @@ jobs:
 
   flutter:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            patcher/.tools/flutter
+            ~/.pub-cache
+          key: flutter-linux-${{ hashFiles('patcher/tools/flutter-release.json', 'patcher/app/pubspec.lock') }}
       - run: tools/install-flutter.sh
       - working-directory: patcher/app
         run: ../.tools/flutter/bin/flutter analyze && ../.tools/flutter/bin/flutter test
@@ -83,13 +126,23 @@ jobs:
   # Release build, publish, HTTPS + HTTP/3 front, `curl | bash` install, tamper refusal,
   # front checks and a browser pass over the website.
   e2e:
-    needs: [rust, flutter]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
       - run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            patcher/.tools/flutter
+            ~/.pub-cache
+          key: flutter-linux-${{ hashFiles('patcher/tools/flutter-release.json', 'patcher/app/pubspec.lock') }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: patcher
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: tools/install-flutter.sh
       - run: tools/e2e-install.sh
       - if: always()
@@ -100,9 +153,8 @@ jobs:
           if-no-files-found: ignore
 
   windows-build:
-    needs: rust-windows
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 50
     defaults:
       run:
         shell: pwsh
@@ -110,14 +162,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
+      - id: flutter-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\flutter
+          key: flutter-windows-3.47.9-d8e2b5977e09082c6440f89dc1aa887b94c8fbcc3b39222797046295a3f68a9e
       - name: Install Flutter 3.47.9 (checksum verified)
+        if: steps.flutter-cache.outputs.cache-hit != 'true'
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'flutter.zip'
           Invoke-WebRequest -UseBasicParsing 'https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.9-stable.zip' -OutFile $zip
           $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
           if ($hash -ne 'd8e2b5977e09082c6440f89dc1aa887b94c8fbcc3b39222797046295a3f68a9e') { throw "Flutter archive checksum mismatch: $hash" }
           Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
-          "$env:RUNNER_TEMP\flutter\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Put Flutter on the path
+        run: '"$env:RUNNER_TEMP\flutter\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH'
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: patcher
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build
         working-directory: patcher/app
         run: flutter build windows --release
@@ -134,11 +198,12 @@ jobs:
           name: windows-x64-bundle
           path: patcher/app/build/windows/x64/runner/Release/
 
+  # Publishing waits for every check, Windows included.
   images:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [rust, site-and-config, e2e]
+    needs: [lint, rust, rust-windows, site-and-config, flutter, e2e]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -164,6 +229,8 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
           tags: |
             ghcr.io/imabee-glacier/${{ matrix.image.name }}:${{ github.sha }}
             ghcr.io/imabee-glacier/${{ matrix.image.name }}:main
@@ -171,4 +238,6 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
       - name: Digest
-        run: echo "ghcr.io/imabee-glacier/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          IMAGE: ghcr.io/imabee-glacier/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}
+        run: echo "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
