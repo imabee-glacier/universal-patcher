@@ -1,0 +1,218 @@
+# Scheduled work. Write access is scoped per job: renewal writes the repository and is the only
+# job holding signing keys; the health check writes only site/data; expiry and backup read.
+# publish-app.yaml is the on-demand publishing Job.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: renew-metadata
+  namespace: universal-patcher
+spec:
+  schedule: "17 */6 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: renew
+              image: patcher-cli
+              # Game releases at the root, patcher releases under app/; each has its own root.
+              # Until a game release is published the root has no metadata and is skipped.
+              command: ["/bin/sh", "-ec"]
+              args:
+                - >-
+                  if [ -e /srv/repository/metadata/timestamp.json ]; then
+                  patcher renew --root=/keys/root.json --key=/keys/online.pem
+                  --repository=/srv/repository; fi &&
+                  patcher renew --root=/keys/app-root.json --key=/keys/app-online.pem
+                  --repository=/srv/repository/app
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {cpu: "1", memory: 256Mi}
+              env:
+                - {name: TMPDIR, value: /tmp}
+              volumeMounts:
+                - {name: repository, mountPath: /srv/repository}
+                - {name: keys, mountPath: /keys, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: repository
+              persistentVolumeClaim: {claimName: patcher-repository}
+            - name: keys
+              secret: {secretName: release-signing, defaultMode: 0400}
+            - name: tmp
+              emptyDir: {sizeLimit: 256Mi}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: check-expiry
+  namespace: universal-patcher
+spec:
+  schedule: "47 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: expiry
+              image: patcher-cli
+              command: ["/bin/sh", "-ec"]
+              args:
+                - >-
+                  if [ -e /srv/repository/metadata/timestamp.json ]; then
+                  patcher expiry --repository=/srv/repository --within-hours=12; fi &&
+                  patcher expiry --repository=/srv/repository/app --within-hours=12
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                limits: {cpu: 200m, memory: 64Mi}
+              volumeMounts:
+                - {name: repository, mountPath: /srv/repository, readOnly: true}
+          volumes:
+            - name: repository
+              persistentVolumeClaim: {claimName: patcher-repository, readOnly: true}
+---
+# Probes the public origin as users reach it and writes the timestamped status the website
+# shows. The website treats a result older than 15 minutes as unknown, so a stopped job reads
+# as "status unknown", never as operational. A failed probe also fails the Job.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: check-health
+  namespace: universal-patcher
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: health
+              image: patcher-cli
+              command: ["/bin/sh", "-ec"]
+              args: ['patcher health --origin="$PATCHER_ORIGIN" --output=/out/health.json']
+              envFrom:
+                - configMapRef: {name: patcher-site}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                limits: {cpu: 200m, memory: 64Mi}
+              volumeMounts:
+                - {name: repository, mountPath: /out, subPath: site/data}
+          volumes:
+            - name: repository
+              persistentVolumeClaim: {claimName: patcher-repository}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-repository
+  namespace: universal-patcher
+spec:
+  schedule: "5 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: rclone
+              image: rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466
+              # Everything published is backed up. Files that never change at their path are
+              # copied with --immutable, so a backup can never overwrite one; the files a
+              # promotion replaces are copied afterwards. Locks and staging dot-directories
+              # are skipped.
+              command: ["/bin/sh", "-ec"]
+              args:
+                - >-
+                  rclone copy --immutable --filter-from /etc/backup/immutable.filter
+                  /srv/repository "$DESTINATION" &&
+                  rclone copy --filter-from /etc/backup/mutable.filter
+                  /srv/repository "$DESTINATION"
+              env:
+                - {name: RCLONE_CONFIG, value: /config/rclone.conf}
+                - name: DESTINATION
+                  valueFrom: {secretKeyRef: {name: release-backup, key: destination}}
+                - {name: HOME, value: /tmp}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                requests: {cpu: 100m, memory: 128Mi}
+                limits: {cpu: "1", memory: 512Mi}
+              volumeMounts:
+                - {name: repository, mountPath: /srv/repository, readOnly: true}
+                - {name: config, mountPath: /config, readOnly: true}
+                - {name: filters, mountPath: /etc/backup, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: repository
+              persistentVolumeClaim: {claimName: patcher-repository, readOnly: true}
+            - name: config
+              secret:
+                secretName: release-backup
+                items: [{key: rclone.conf, path: rclone.conf}]
+            - name: filters
+              configMap: {name: backup-filters}
+            - name: tmp
+              emptyDir: {sizeLimit: 64Mi}

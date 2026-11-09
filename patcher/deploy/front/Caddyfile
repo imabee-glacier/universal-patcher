@@ -1,0 +1,132 @@
+# Public front for the patcher: the website, the one-line installers, and the signed release
+# repositories, on one hostname. Static files only; nothing here runs request code or accepts
+# writes. Release bytes are served exactly as stored, without compression, so ETag validators
+# and Range responses reach the patcher unchanged.
+#
+# Environment:
+#   PATCHER_DOMAIN    public hostname, for example downloads.example.org
+#   PATCHER_TLS_MODE  "acme" (default; Let's Encrypt) or "internal" (local test CA)
+{
+	admin off
+	persist_config off
+	skip_install_trust
+	# kubelet probes connect by address without SNI; answer them with this site's certificate.
+	default_sni {$PATCHER_DOMAIN}
+	servers {
+		protocols h1 h2 h3
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+		max_header_size 16KB
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Let's Encrypt only, with no fallback CA, so a CAA record of `0 issue "letsencrypt.org"` holds.
+# HTTP-01 on :80 and TLS-ALPN-01 on :443; the certificate renews about a third of its lifetime
+# before expiry and must persist across restarts (Let's Encrypt allows five duplicates a week).
+(tls-acme) {
+	tls {
+		protocols tls1.2 tls1.3
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+}
+
+(tls-internal) {
+	tls internal {
+		protocols tls1.2 tls1.3
+	}
+}
+
+(hardening) {
+	header {
+		Strict-Transport-Security "max-age=63072000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=()"
+		-Server
+	}
+}
+
+(release-file) {
+	root * /srv/repository
+	header Content-Security-Policy "default-src 'none'; sandbox"
+	file_server
+}
+
+{$PATCHER_DOMAIN} {
+	import tls-{$PATCHER_TLS_MODE:acme}
+	import hardening
+
+	@unsafe not method GET HEAD
+	handle @unsafe {
+		header Allow "GET, HEAD"
+		respond 405
+	}
+
+	handle /healthz {
+		header Cache-Control "no-store"
+		respond "ok" 200
+	}
+
+	# Content-addressed objects, hash-prefixed targets, numbered metadata and versioned
+	# bootstrap files never change at a given URL. Game releases live at the root, patcher
+	# releases under /app with the same layout.
+	@immutable path_regexp ^/(app/)?(objects/[0-9a-f]{64}|targets/[0-9a-f]{64}\.[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*|metadata/[0-9]+\.(root|targets|snapshot)\.json)$|^/app/bootstrap/[0-9]+\.[0-9]+\.[0-9]+/(manifest\.json|(linux|macos|windows)-(x64|arm64)/patcher-engine(\.exe)?)$|^/app/setup/[0-9]+\.[0-9]+\.[0-9]+/UniversalPatcherSetup-[0-9]+\.[0-9]+\.[0-9]+\.exe$
+	handle @immutable {
+		header Cache-Control "public, max-age=31536000, immutable"
+		@json path *.json
+		header @json Content-Type "application/json"
+		@binary not path *.json
+		header @binary Content-Type "application/octet-stream"
+		import release-file
+	}
+
+	# Replaced on every promotion.
+	@mutable path_regexp ^/((app/)?metadata/timestamp\.json|app/bootstrap/latest|install\.sh|install\.ps1)$
+	handle @mutable {
+		header Cache-Control "no-cache"
+		@json path *.json
+		header @json Content-Type "application/json"
+		@text not path *.json
+		header @text Content-Type "text/plain; charset=utf-8"
+		import release-file
+	}
+
+	# Catalog and health status published beside the repository; the copies built into the
+	# image are the "nothing published yet" state.
+	@sitedata path /data/catalog.json /data/health.json
+	handle @sitedata {
+		header Cache-Control "no-cache"
+		header Content-Type "application/json"
+		header Content-Security-Policy "default-src 'none'; sandbox"
+		route {
+			file_server {
+				root /srv/repository/site
+				pass_thru
+			}
+			file_server {
+				root /srv/site
+			}
+		}
+	}
+
+	handle {
+		root * /srv/site
+		encode zstd gzip
+		header Cache-Control "no-cache"
+		header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'; upgrade-insecure-requests"
+		file_server {
+			hide .*
+		}
+	}
+}
