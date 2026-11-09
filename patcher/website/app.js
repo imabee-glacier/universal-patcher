@@ -53,6 +53,8 @@ function renderDownload() {
   link.hidden = !release;
   link.removeAttribute('href');
   $('#download-unavailable').hidden = Boolean(release);
+  // Say what is missing; "not available" only once a complete selection has no release.
+  $('#unavailable-label').textContent = !selectedOS ? t('Choose your system first') : !arch ? t('Choose your architecture') : t('Download not yet available');
   $('#install-command').hidden = true;
   $('#command-text').textContent = '';
   $('#copy-status').textContent = '';
@@ -123,9 +125,13 @@ async function getJSON(path) {
 }
 const emptyCatalog = $('.empty-catalog').cloneNode(true);
 let suggestedOS = '';
+let suggestedArch = '';
+const archNames = { x86_64: 'x64', aarch64: 'ARM64' };
 let health = null;
 function renderHint() {
-  $('#platform-hint').textContent = suggestedOS ? t('{os} suggested by your browser. Confirm your architecture below.', { os: osNames[suggestedOS] }) : t('Choose your operating system and architecture.');
+  $('#platform-hint').textContent = suggestedOS && suggestedArch
+    ? t('{os} on {arch} detected by your browser. You can change either below.', { os: osNames[suggestedOS], arch: archNames[suggestedArch] })
+    : suggestedOS ? t('{os} suggested by your browser. Confirm your architecture below.', { os: osNames[suggestedOS] }) : t('Choose your operating system and architecture.');
 }
 translatePage();
 all('[data-os]').forEach(button => button.addEventListener('click', () => {
@@ -161,6 +167,18 @@ if (!tablet) {
     suggestedOS = detected;
     renderHint();
   }
+}
+// Chromium-based browsers report the CPU through client hints; elsewhere the choice stays manual.
+// A reported value is detection, not a guess, and a choice the visitor already made is kept.
+if (suggestedOS && navigator.userAgentData?.getHighEntropyValues) {
+  navigator.userAgentData.getHighEntropyValues(['architecture', 'bitness']).then(({ architecture, bitness }) => {
+    const detected = bitness === '64' ? { x86: 'x86_64', arm: 'aarch64' }[architecture] : undefined;
+    if (!detected || $('#architecture').value) return;
+    suggestedArch = detected;
+    $('#architecture').value = detected;
+    renderHint();
+    renderDownload();
+  }).catch(() => { /* Keep the architecture choice manual. */ });
 }
 getJSON('data/catalog.json').then(data => {
   if (!validCatalog(data)) throw new Error('Invalid catalog');

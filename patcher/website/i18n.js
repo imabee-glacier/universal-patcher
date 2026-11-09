@@ -103,6 +103,8 @@ const portuguese = {
   'Installation command copied.': 'Comando de instalação copiado.',
   'Copy is unavailable. Select the command and copy it manually.': 'Não foi possível copiar. Selecione o comando e copie manualmente.',
   '{os} suggested by your browser. Confirm your architecture below.': 'Seu navegador sugeriu {os}. Confirme sua arquitetura abaixo.',
+  '{os} on {arch} detected by your browser. You can change either below.': 'Seu navegador detectou {os} em {arch}. Você pode alterar abaixo.',
+  'Choose your system first': 'Escolha seu sistema primeiro', 'Choose your architecture': 'Escolha sua arquitetura',
   'Status unknown · Last check is stale': 'Status desconhecido · A última verificação está desatualizada',
   'Services operational': 'Serviços funcionando', 'Service disruption': 'Serviço com instabilidade', 'Services unavailable': 'Serviços indisponíveis',
   '{status} · Checked {date}': '{status} · Verificado em {date}',
