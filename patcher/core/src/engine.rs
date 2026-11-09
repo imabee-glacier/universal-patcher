@@ -119,9 +119,12 @@ impl Root {
         self.check(path)?;
         match self.dir.open(path) {
             Ok(f) => {
-                let m = f.into_std().metadata()?;
-                ensure!(m.is_file(), "Managed path is not a regular file");
-                Ok(Some(Stamp::of(&m)))
+                let f = f.into_std();
+                ensure!(
+                    f.metadata()?.is_file(),
+                    "Managed path is not a regular file"
+                );
+                Ok(Some(Stamp::of_file(&f)?))
             }
             Err(e) if not_found(&e) => Ok(None),
             Err(e) => Err(e.into()),
@@ -136,12 +139,14 @@ impl Root {
             Err(e) if not_found(&e) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        let before = f.metadata()?;
-        ensure!(before.is_file(), "Managed path is not a regular file");
-        let (hash, size) = storage::hash_reader(&f)?;
-        let before = Stamp::of(&before);
         ensure!(
-            size == before.size && Stamp::of(&f.metadata()?) == before,
+            f.metadata()?.is_file(),
+            "Managed path is not a regular file"
+        );
+        let before = Stamp::of_file(&f)?;
+        let (hash, size) = storage::hash_reader(&f)?;
+        ensure!(
+            size == before.size && Stamp::of_file(&f)? == before,
             "File changed while hashing"
         );
         ensure!(

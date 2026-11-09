@@ -502,7 +502,20 @@ fn torn_journal_tail_recovers_but_corrupt_record_fails() {
         .unwrap()
         .write_all(b"{\"torn")
         .unwrap();
-    assert_eq!(Journal::open(&p).unwrap().events.len(), 1);
+    let mut recovered = Journal::open(&p).unwrap();
+    assert_eq!(recovered.events.len(), 1);
+    // A record appended after trimming the torn tail lands at the end of the valid records.
+    recovered
+        .append(Event::Complete {
+            binding: Binding {
+                install: "i".into(),
+                manifest: "m".into(),
+                policy_revision: 1,
+            },
+        })
+        .unwrap();
+    drop(recovered);
+    assert_eq!(Journal::open(&p).unwrap().events.len(), 2);
     let mut b = fs::read(&p).unwrap();
     b[2] = b'X';
     fs::write(&p, b).unwrap();

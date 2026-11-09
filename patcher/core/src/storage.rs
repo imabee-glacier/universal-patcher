@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -296,10 +296,13 @@ pub struct Journal {
 impl Journal {
     pub fn open(path: &Path) -> Result<Self> {
         fs::create_dir_all(path.parent().context("Journal parent missing")?)?;
+        // Read and write rather than append: trimming a torn tail needs write access, which a
+        // Windows append-only handle does not have. Records are written at the end explicitly.
         let mut file = OpenOptions::new()
             .read(true)
-            .append(true)
+            .write(true)
             .create(true)
+            .truncate(false)
             .open(path)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
@@ -365,6 +368,7 @@ impl Journal {
         };
         let mut data = serde_json::to_vec(&r)?;
         data.push(b'\n');
+        self.file.seek(std::io::SeekFrom::End(0))?;
         self.file.write_all(&data)?;
         self.file.sync_all()?;
         self.sequence += 1;
