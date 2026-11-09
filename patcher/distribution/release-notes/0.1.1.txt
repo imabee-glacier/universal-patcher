@@ -1,0 +1,5 @@
+Built and signed through the release pipeline: GitHub builds each platform, and the release is published and served only from play.imabee.com.
+
+The website now detects your processor architecture when your browser reports it.
+
+Windows: file flushes, journal recovery and corruption detection fixed on NTFS.

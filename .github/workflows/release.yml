@@ -1,0 +1,143 @@
+# Builds a patcher release on GitHub and attaches it, as one staging archive, to a release in
+# this private repository. Nothing here is served to users and no signing key is used: publishing
+# happens on our own server with tools/release-to-site.sh, and users download only from the site.
+#
+# Start a release by pushing a tag `app-vX.Y.Z` whose commit has
+# patcher/distribution/release-notes/X.Y.Z.txt. Platforms offered on the website come from
+# patcher/distribution/offer; every other platform is built and listed as not verified.
+name: release
+
+on:
+  push:
+    tags: ["app-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PATCHER_DIST_ORIGIN: https://play.imabee.com/
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - id: v
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          v="${TAG#app-v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must be app-vX.Y.Z"; exit 1; }
+          test -s "patcher/distribution/release-notes/$v.txt" || { echo "::error::missing patcher/distribution/release-notes/$v.txt"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: patcher
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev
+      - run: tools/install-flutter.sh
+      - name: Build with the published origin and root
+        working-directory: patcher/app
+        run: PATCHER_DIST_ROOT="$GITHUB_WORKSPACE/patcher/distribution/app-root.json" ../.tools/flutter/bin/flutter build linux --release
+      # A tar keeps file modes and links, which the artifact store does not.
+      - run: tar -C app/build/linux/x64/release -cf "$RUNNER_TEMP/linux-x64.tar" bundle
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: linux-x64, path: "${{ runner.temp }}/linux-x64.tar", if-no-files-found: error}
+
+  windows:
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: patcher
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Install Flutter 3.47.9 (checksum verified)
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'flutter.zip'
+          Invoke-WebRequest -UseBasicParsing 'https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.9-stable.zip' -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($hash -ne 'd8e2b5977e09082c6440f89dc1aa887b94c8fbcc3b39222797046295a3f68a9e') { throw "Flutter archive checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          "$env:RUNNER_TEMP\flutter\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Build with the published origin and root
+        working-directory: patcher/app
+        run: |
+          $env:PATCHER_DIST_ROOT = Join-Path $env:GITHUB_WORKSPACE 'patcher\distribution\app-root.json'
+          flutter build windows --release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: windows-x64, path: patcher/app/build/windows/x64/runner/Release/, if-no-files-found: error}
+
+  package:
+    needs: [version, linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: patcher
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {path: "${{ runner.temp }}/builds"}
+      - run: cargo build --locked --release --bin patcher
+      - name: Package every platform
+        run: |
+          b="$RUNNER_TEMP/builds"; s="$RUNNER_TEMP/staging/app"
+          mkdir -p "$b/linux" "$s"
+          tar -C "$b/linux" -xf "$b/linux-x64/linux-x64.tar"
+          target/release/patcher package-app "$b/linux/bundle" --version "$VERSION" --os linux --arch x64 --staging "$s/packages"
+          target/release/patcher package-app "$b/windows-x64" --version "$VERSION" --os windows --arch x64 --staging "$s/packages"
+          cp "distribution/release-notes/$VERSION.txt" "$s/notes.txt"
+          cp distribution/offer "$s/offer"
+      - name: Engines carry the published origin and root
+        run: |
+          for engine in "$RUNNER_TEMP"/staging/app/packages/bootstrap/"$VERSION"/*/patcher-engine*; do
+            grep -q --text "$PATCHER_DIST_ORIGIN" "$engine" || { echo "::error::$engine lacks the origin"; exit 1; }
+            for key in $(jq -r '.signed.keys | keys[]' distribution/app-root.json); do
+              grep -q --text "$key" "$engine" || { echo "::error::$engine lacks root key $key"; exit 1; }
+            done
+          done
+      - name: Windows installer
+        run: |
+          w="$RUNNER_TEMP/inno"; mkdir -p "$w"
+          cp distribution/windows/universal-patcher.iss "$w/"
+          cp "$RUNNER_TEMP/staging/app/packages/bootstrap/$VERSION/windows-x64/patcher-engine.exe" "$w/"
+          chmod -R a+rwX "$w"
+          docker run --rm -v "$w:/work" \
+            amake/innosetup@sha256:81713b854eb12278021045dcb57701fe35312030b2dc1d37710184f294a23f81 \
+            "/DAppVersion=$VERSION" "/DOrigin=$PATCHER_DIST_ORIGIN" /DEngineExe=patcher-engine.exe universal-patcher.iss
+          cp "$w/output/UniversalPatcherSetup-$VERSION.exe" "$RUNNER_TEMP/staging/app/"
+      - name: Attach to a release in this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          out="$RUNNER_TEMP/patcher-$VERSION-staging.tar.gz"
+          tar -C "$RUNNER_TEMP/staging" -czf "$out" app
+          (cd "$RUNNER_TEMP" && sha256sum "patcher-$VERSION-staging.tar.gz" > "patcher-$VERSION-staging.tar.gz.sha256")
+          gh release create "$TAG" "$out" "$out.sha256" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Universal Patcher $VERSION" --notes-file "distribution/release-notes/$VERSION.txt"
