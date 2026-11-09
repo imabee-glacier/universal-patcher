@@ -1,9 +1,9 @@
-# Publishes the patcher release waiting in the staging volume. Not part of the kustomization:
+# Publishes the patcher release waiting in staging/ on the data volume. Not part of the kustomization:
 # run it on demand, once per release, after uploading staging (deploy/README.md, "Publishing"):
 #   kubectl create -f publish-app.yaml
 #   kubectl -n universal-patcher wait --for=condition=complete job -l app=publish-app --timeout=15m
 #
-# Staging layout, under /var/lib/appsynergy/volumes/patcher-staging/_data/current:
+# Staging layout, under /var/lib/appsynergy/volumes/patcher-data/_data/staging/app:
 #   packages/                          output of `patcher package-app` for every platform
 #   notes.txt                          release notes; paragraphs separated by blank lines
 #   offer                              platforms offered as verified downloads, one per line
@@ -36,9 +36,9 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              s=/staging/current
+              s=/srv/data/staging/app
               set -- --root=/keys/app-root.json --key=/keys/app-online.pem \
-                --repository=/srv/repository --origin="$PATCHER_ORIGIN" --notes="$s/notes.txt"
+                --repository=/srv/data/repository --origin="$PATCHER_ORIGIN" --notes="$s/notes.txt"
               while read -r platform; do
                 [ -n "$platform" ] && set -- "$@" --offer="$platform"
               done < "$s/offer"
@@ -58,15 +58,12 @@ spec:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: "2", memory: 512Mi}
           volumeMounts:
-            - {name: repository, mountPath: /srv/repository}
-            - {name: staging, mountPath: /staging, readOnly: true}
+            - {name: data, mountPath: /srv/data}
             - {name: keys, mountPath: /keys, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
-        - name: repository
-          persistentVolumeClaim: {claimName: patcher-repository}
-        - name: staging
-          persistentVolumeClaim: {claimName: patcher-staging, readOnly: true}
+        - name: data
+          persistentVolumeClaim: {claimName: patcher-data}
         - name: keys
           secret: {secretName: release-signing, defaultMode: 0400}
         - name: tmp
