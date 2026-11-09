@@ -17,9 +17,10 @@ const fixture = {
   ],
   releases: [{ version: 'test-1', date: '2026-11-09', notes: ['Fixture release note.'] }],
 };
-async function mount({ catalog = empty, health = { schema: 1, status: 'unknown', checked_at: null }, fail = false, platform = '', clipboard, languages = ['en-US'], savedLanguage, blockedStorage = false } = {}) {
+async function mount({ catalog = empty, health = { schema: 1, status: 'unknown', checked_at: null }, fail = false, platform = '', hints, clipboard, languages = ['en-US'], savedLanguage, blockedStorage = false } = {}) {
   const dom = new JSDOM(html, { url: 'https://website.example.test/', runScripts: 'outside-only' });
   Object.defineProperty(dom.window.navigator, 'platform', { value: platform });
+  if (hints) Object.defineProperty(dom.window.navigator, 'userAgentData', { value: { platform, getHighEntropyValues: async () => hints } });
   Object.defineProperty(dom.window.navigator, 'languages', { value: languages });
   Object.defineProperty(dom.window.navigator, 'language', { value: languages[0] });
   if (savedLanguage) dom.window.localStorage.setItem('patcher-website-language', savedLanguage);
@@ -113,6 +114,35 @@ test('browser platform is a suggestion; architecture remains unanswered', async 
   assert.equal(v.$('#architecture').value, '');
   assert.match(v.$('#platform-hint').textContent, /suggested/);
   v.dom.window.close();
+});
+test('a reported architecture is preselected and offers the published download', async () => {
+  const v = await mount({ catalog: fixture, platform: 'Linux', hints: { architecture: 'x86', bitness: '64' } });
+  assert.equal(v.$('#architecture').value, 'x86_64');
+  assert.equal(v.$('#download-link').hidden, false);
+  assert.equal(v.$('#install-command').hidden, false);
+  assert.match(v.$('#platform-hint').textContent, /Linux on x64 detected/);
+  v.dom.window.close();
+});
+test('a reported architecture with no release says so; a missing choice says what to choose', async () => {
+  const arm = await mount({ catalog: fixture, platform: 'Linux', hints: { architecture: 'arm', bitness: '64' } });
+  assert.equal(arm.$('#architecture').value, 'aarch64');
+  assert.equal(arm.$('#download-link').hidden, true);
+  assert.equal(arm.$('#unavailable-label').textContent, 'Download not yet available');
+  arm.dom.window.close();
+  const unreported = await mount({ catalog: fixture, platform: 'Linux x86_64' });
+  assert.equal(unreported.$('#architecture').value, '');
+  assert.equal(unreported.$('#unavailable-label').textContent, 'Choose your architecture');
+  unreported.dom.window.close();
+  const none = await mount({ catalog: fixture });
+  assert.equal(none.$('#unavailable-label').textContent, 'Choose your system first');
+  none.dom.window.close();
+});
+test('a 32-bit or unknown report leaves the architecture to the visitor', async () => {
+  for (const hints of [{ architecture: 'x86', bitness: '32' }, { architecture: 'riscv', bitness: '64' }]) {
+    const v = await mount({ catalog: fixture, platform: 'Linux', hints });
+    assert.equal(v.$('#architecture').value, '');
+    v.dom.window.close();
+  }
 });
 test('health is separate, timestamped, and stale checks cannot claim operational status', async () => {
   for (const [age, expected] of [[0, /Services operational/], [3600000, /Status unknown.*stale/]]) {
