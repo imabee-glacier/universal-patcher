@@ -36,6 +36,12 @@ fn wait_for(state: &str) -> Value {
     let started = Instant::now();
     loop {
         let s = snapshot();
+        // Every snapshot is coherent: the Ready state and play readiness never disagree.
+        assert_eq!(
+            s["state"] == "ready",
+            s["ready"] == true,
+            "incoherent snapshot: {s}"
+        );
         if s["state"] == state {
             return s;
         }
@@ -43,7 +49,7 @@ fn wait_for(state: &str) -> Value {
             started.elapsed() < Duration::from_secs(30),
             "never reached {state}: {s}"
         );
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 

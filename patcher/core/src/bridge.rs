@@ -93,6 +93,27 @@ impl Default for Snapshot {
         }
     }
 }
+/// Copies engine progress into the snapshot. The engine's final "ready" report is not
+/// readiness: only the run's outcome sets the Ready state, together with `ready`, so the two
+/// can never disagree in a published snapshot.
+fn apply_progress(s: &mut Snapshot, p: Progress, elapsed: Duration) {
+    s.bytes_per_second = if p.phase == "downloading" {
+        (p.bytes_done as f64 / elapsed.as_secs_f64().max(0.01)) as u64
+    } else {
+        0
+    };
+    if p.phase != "ready" {
+        s.title = phase_title(&p.phase).into();
+        s.state = p.phase.clone();
+        s.phase = p.phase;
+        s.detail = p.detail;
+    }
+    s.bytes_done = p.bytes_done;
+    s.bytes_total = p.bytes_total;
+    s.files_done = p.files_done;
+    s.files_total = p.files_total;
+}
+
 struct Service {
     snapshot: Mutex<Snapshot>,
     config: Option<Config>,
@@ -452,23 +473,7 @@ impl Service {
             s.preferences = policy.preferences.clone();
         });
         let started = Instant::now();
-        let report = |p: Progress| {
-            self.update(|s| {
-                s.title = phase_title(&p.phase).into();
-                s.state = p.phase.clone();
-                s.bytes_per_second = if p.phase == "downloading" {
-                    (p.bytes_done as f64 / started.elapsed().as_secs_f64().max(0.01)) as u64
-                } else {
-                    0
-                };
-                s.phase = p.phase;
-                s.bytes_done = p.bytes_done;
-                s.bytes_total = p.bytes_total;
-                s.files_done = p.files_done;
-                s.files_total = p.files_total;
-                s.detail = p.detail;
-            })
-        };
+        let report = |p: Progress| self.update(|s| apply_progress(s, p, started.elapsed()));
         let options = engine::RunOptions {
             full_verify,
             ..Default::default()
@@ -776,5 +781,40 @@ pub unsafe extern "C" fn patcher_command(input: *const c_char) -> *mut c_char {
 pub unsafe extern "C" fn patcher_free(value: *mut c_char) {
     if !value.is_null() {
         drop(unsafe { CString::from_raw(value) });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn progress(phase: &str) -> Progress {
+        Progress {
+            phase: phase.into(),
+            detail: format!("{phase} detail"),
+            bytes_done: 10,
+            bytes_total: 10,
+            files_done: 2,
+            files_total: 2,
+        }
+    }
+
+    #[test]
+    fn engine_ready_progress_never_claims_readiness() {
+        let mut s = Snapshot::default();
+        apply_progress(&mut s, progress("verifying"), Duration::from_secs(1));
+        assert_eq!((s.state.as_str(), s.ready), ("verifying", false));
+        apply_progress(&mut s, progress("ready"), Duration::from_secs(1));
+        assert_eq!((s.state.as_str(), s.ready), ("verifying", false));
+        assert_eq!((s.files_done, s.files_total), (2, 2));
+    }
+
+    #[test]
+    fn transfer_rate_is_reported_only_while_downloading() {
+        let mut s = Snapshot::default();
+        apply_progress(&mut s, progress("downloading"), Duration::from_secs(2));
+        assert_eq!(s.bytes_per_second, 5);
+        apply_progress(&mut s, progress("applying"), Duration::from_secs(2));
+        assert_eq!(s.bytes_per_second, 0);
     }
 }

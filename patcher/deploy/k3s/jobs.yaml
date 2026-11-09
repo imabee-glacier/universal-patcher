@@ -157,6 +157,10 @@ metadata:
   name: backup-repository
   namespace: universal-patcher
 spec:
+  # Suspended until the off-node destination exists (Secret release-backup: rclone.conf and
+  # destination). Unsuspend with: kubectl -n universal-patcher patch cronjob backup-repository
+  #   -p '{"spec":{"suspend":false}}'   and record it here.
+  suspend: true
   schedule: "5 2 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
