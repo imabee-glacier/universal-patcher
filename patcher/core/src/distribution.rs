@@ -110,6 +110,10 @@ pub fn package_app(
     arch: &str,
     staging: &Path,
 ) -> Result<AppManifest> {
+    ensure!(
+        crate::model::game_runs_on(os, arch),
+        "The Sims 4 does not run on {os}-{arch}; nothing to package"
+    );
     for file in required_files(os)? {
         ensure!(
             bundle.join(file).is_file(),

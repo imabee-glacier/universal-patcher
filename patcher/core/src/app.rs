@@ -39,6 +39,10 @@ pub fn platform() -> Result<(&'static str, &'static str)> {
         "aarch64" => "arm64",
         other => bail!("Unsupported architecture: {other}"),
     };
+    ensure!(
+        crate::model::game_runs_on(os, arch),
+        "The Sims 4 does not run on {os} on {arch}, so Universal Patcher is not offered there"
+    );
     Ok((os, arch))
 }
 

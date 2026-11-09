@@ -119,7 +119,7 @@ Monitor public downloads, metadata/certificate expiry, disk capacity, backups, a
 
 ## Website
 
-Provide a responsive layout, keyboard navigation, readable contrast, and a primary patcher download action. Suggest the platform when detectable; keep OS/architecture choices visible and never guess when ambiguous. Show supported platforms, installation steps, pack catalog, and release notes from the published catalog. Service status comes from health checks with a timestamp, not release metadata.
+Provide a responsive layout, keyboard navigation, readable contrast, and a primary patcher download action. Offer and accept only platforms where The Sims 4 runs: Windows and Linux on x64, and macOS on Intel and Apple silicon; the website, install scripts, and engine refuse every other platform. Suggest the platform when detectable; ask a Mac's processor rather than guess it. Show supported platforms, installation steps, pack catalog, and release notes from the published catalog. Service status comes from health checks with a timestamp, not release metadata.
 
 Normal use requires no account, manual DLC extraction, or separate unlocker. The patcher accesses release endpoints directly and does not depend on website JavaScript. Check download links, layout, keyboard use, and load time before release; record the results.
 

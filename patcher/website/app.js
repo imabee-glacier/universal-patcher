@@ -9,6 +9,14 @@ let filter = 'all';
 let catalogFailed = false;
 const osNames = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
 const kinds = { expansion: 'Expansion pack', game: 'Game pack', stuff: 'Stuff pack', kit: 'Kit' };
+// Where The Sims 4 runs: Windows and Linux on x64 only, macOS on Intel and Apple silicon.
+// Nothing else is listed, offered, or accepted from the catalog.
+const gamePlatforms = { windows: ['x86_64'], linux: ['x86_64'], macos: ['x86_64', 'aarch64'] };
+const archNames = { x86_64: 'x64', aarch64: 'ARM64' };
+const macNames = { x86_64: 'Intel', aarch64: 'Apple silicon' };
+// Windows and Linux have one architecture; only a Mac needs the question.
+const archFor = os => gamePlatforms[os]?.length === 1 ? gamePlatforms[os][0] : $('#architecture').value;
+const platformName = (os, arch) => os === 'macos' ? `macOS · ${macNames[arch] ?? ''}`.replace(/ · $/, '') : `${osNames[os]} · ${archNames[arch]}`;
 
 export function safeURL(value) {
   if (typeof value !== 'string') return null;
@@ -24,7 +32,7 @@ export function validCatalog(data) {
   if ((data.downloads.length || data.packs.length || data.releases.length) && !data.published_at) return false;
   const combinations = new Set();
   return data.downloads.every(item => {
-    if (!item || !osNames[item.os] || !['x86_64', 'aarch64'].includes(item.arch) || typeof item.verified !== 'boolean' || !text(item.version)) return false;
+    if (!item || !gamePlatforms[item.os]?.includes(item.arch) || typeof item.verified !== 'boolean' || !text(item.version)) return false;
     const key = `${item.os}/${item.arch}`;
     if (combinations.has(key)) return false;
     combinations.add(key);
@@ -47,34 +55,35 @@ function node(tag, className, text) {
   return result;
 }
 function renderDownload() {
-  const arch = $('#architecture').value;
+  $('.architecture').hidden = selectedOS !== 'macos';
+  const arch = selectedOS ? archFor(selectedOS) : '';
   const release = catalog.downloads.find(item => item.os === selectedOS && item.arch === arch && item.verified);
   const link = $('#download-link');
   link.hidden = !release;
   link.removeAttribute('href');
   $('#download-unavailable').hidden = Boolean(release);
   // Say what is missing; "not available" only once a complete selection has no release.
-  $('#unavailable-label').textContent = !selectedOS ? t('Choose your system first') : !arch ? t('Choose your architecture') : t('Download not yet available');
+  $('#unavailable-label').textContent = !selectedOS ? t('Choose your system first') : !arch ? t('Choose your Mac') : t('Download not yet available');
   $('#install-command').hidden = true;
   $('#command-text').textContent = '';
   $('#copy-status').textContent = '';
   if (release) {
     link.href = safeURL(release.url);
     link.textContent = t('Download for {os} ↗', { os: osNames[selectedOS] });
-    $('#download-state').textContent = `${t('Version {version}', { version: release.version })} · ${arch === 'x86_64' ? 'x64' : 'ARM64'}`;
+    $('#download-state').textContent = `${t('Version {version}', { version: release.version })} · ${platformName(selectedOS, arch)}`;
     $('#download-reason').textContent = t('A verified release is available for this platform.');
     if (release.install_script) {
       $('#install-command').hidden = false;
       $('#command-text').textContent = selectedOS === 'windows' ? `irm '${release.install_script}' | iex` : `curl -fsSL '${release.install_script}' | bash`;
     }
   } else {
-    $('#download-state').textContent = catalogFailed ? t('Release information is unavailable.') : selectedOS ? `${osNames[selectedOS]}${arch ? ` · ${arch === 'x86_64' ? 'x64' : 'ARM64'}` : ''}` : t('A little more care before we launch.');
-    $('#download-reason').textContent = catalogFailed ? t('Please try again later. Downloads stay unavailable until the catalog can be checked.') : !selectedOS ? t('Public installers are not available yet. Choose a platform to check its availability.') : !arch ? t('Choose your architecture to check for a verified installer.') : t('No verified public installer is published for this selection yet.');
+    $('#download-state').textContent = catalogFailed ? t('Release information is unavailable.') : selectedOS ? (arch ? platformName(selectedOS, arch) : osNames[selectedOS]) : t('A little more care before we launch.');
+    $('#download-reason').textContent = catalogFailed ? t('Please try again later. Downloads stay unavailable until the catalog can be checked.') : !selectedOS ? t('Public installers are not available yet. Choose a platform to check its availability.') : !arch ? t('Choose Intel or Apple silicon to check for a verified installer.') : t('No verified public installer is published for this selection yet.');
   }
   const hasRelease = catalog.downloads.some(item => item.verified);
   $('.availability').textContent = hasRelease ? t('Platform availability and installation options below') : t('In development · Check platform availability below');
   $('.panel-heading .outline-tag').textContent = hasRelease ? t('Releases') : t('Preview');
-  $('.questions details:first-child p').textContent = hasRelease ? t('Published platforms: {platforms}. Use the download selector to check each architecture. Other platform variants remain unavailable until separately verified.', { platforms: [...new Set(catalog.downloads.filter(item => item.verified).map(item => osNames[item.os]))].join(', ') }) : t('Windows, Linux, and native macOS have separate verification requirements. No public platform release is currently listed. The download selector will show availability for each OS and architecture when verified releases are published.');
+  $('.questions details:first-child p').textContent = hasRelease ? t('Available now: {platforms}. Universal Patcher is offered only where The Sims 4 runs: Windows and Linux on x64 computers, and macOS on Intel and Apple silicon. Each platform appears here once it is verified.', { platforms: [...new Set(catalog.downloads.filter(item => item.verified).map(item => osNames[item.os]))].join(', ') }) : t('Universal Patcher is offered only where The Sims 4 runs: Windows and Linux on x64 computers, and macOS on Intel and Apple silicon. No platform is published yet; each appears in the download selector once it is verified.');
 }
 function renderPacks() {
   const target = $('#pack-results');
@@ -126,12 +135,12 @@ async function getJSON(path) {
 const emptyCatalog = $('.empty-catalog').cloneNode(true);
 let suggestedOS = '';
 let suggestedArch = '';
-const archNames = { x86_64: 'x64', aarch64: 'ARM64' };
 let health = null;
 function renderHint() {
-  $('#platform-hint').textContent = suggestedOS && suggestedArch
-    ? t('{os} on {arch} detected by your browser. You can change either below.', { os: osNames[suggestedOS], arch: archNames[suggestedArch] })
-    : suggestedOS ? t('{os} suggested by your browser. Confirm your architecture below.', { os: osNames[suggestedOS] }) : t('Choose your operating system and architecture.');
+  $('#platform-hint').textContent = suggestedOS === 'macos' && suggestedArch
+    ? t('{os} detected by your browser. You can change it below.', { os: platformName('macos', suggestedArch) })
+    : suggestedOS === 'macos' ? t('macOS suggested by your browser. Choose Intel or Apple silicon below.')
+    : suggestedOS ? t('{os} detected by your browser. You can change it below.', { os: osNames[suggestedOS] }) : t('Choose your operating system.');
 }
 translatePage();
 all('[data-os]').forEach(button => button.addEventListener('click', () => {
@@ -157,7 +166,7 @@ $('#copy-command').addEventListener('click', async () => {
     $('#copy-status').textContent = t('Copy is unavailable. Select the command and copy it manually.');
   }
 });
-// Suggest an OS only when its reported platform is unambiguous; never infer CPU architecture.
+// Suggest an OS only when its reported platform is unambiguous; a Mac's processor is asked or reported, never guessed.
 const reportedPlatform = navigator.userAgentData?.platform || navigator.platform || '';
 const tablet = /iPad|iPhone|Android/i.test(navigator.userAgent) || (/Mac/.test(reportedPlatform) && navigator.maxTouchPoints > 1);
 if (!tablet) {
@@ -168,9 +177,10 @@ if (!tablet) {
     renderHint();
   }
 }
-// Chromium-based browsers report the CPU through client hints; elsewhere the choice stays manual.
-// A reported value is detection, not a guess, and a choice the visitor already made is kept.
-if (suggestedOS && navigator.userAgentData?.getHighEntropyValues) {
+// Only a Mac has a choice to make. Chromium-based browsers report the CPU through client hints;
+// elsewhere it stays manual. A reported value is detection, not a guess, and a choice the
+// visitor already made is kept.
+if (suggestedOS === 'macos' && navigator.userAgentData?.getHighEntropyValues) {
   navigator.userAgentData.getHighEntropyValues(['architecture', 'bitness']).then(({ architecture, bitness }) => {
     const detected = bitness === '64' ? { x86: 'x86_64', arm: 'aarch64' }[architecture] : undefined;
     if (!detected || $('#architecture').value) return;

@@ -48,6 +48,12 @@ if [ "$os" = "macos" ] && [ "$arch" = "x64" ] && [ "$(sysctl -n sysctl.proc_tran
     arch="arm64"
 fi
 platform="${os}-${arch}"
+# Only where The Sims 4 runs: Windows and Linux on x64, macOS on Intel and Apple silicon.
+case "$platform" in
+    linux-x64 | macos-x64 | macos-arm64) ;;
+    linux-arm64) fail "The Sims 4 does not run on Linux on ARM, so Universal Patcher is not offered there" ;;
+    *) fail "The Sims 4 does not run on ${platform}, so Universal Patcher is not offered there" ;;
+esac
 
 version="$(fetch "${BOOTSTRAP}/latest" | tr -d '[:space:]')"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "the download service returned an unexpected version; try again later"
