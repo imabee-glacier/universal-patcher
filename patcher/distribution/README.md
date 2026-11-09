@@ -31,37 +31,30 @@ activates the failed one again. `universal-patcher uninstall` keeps game choices
 
 ## Releasing
 
-Build each platform on its own runner with the origin and the application root baked in:
+GitHub builds; our server publishes; users download only from `https://play.imabee.com/`.
 
-```
-PATCHER_DIST_ORIGIN=https://<domain>/ PATCHER_DIST_ROOT=<app root.json> flutter build linux --release
-PATCHER_DIST_ORIGIN=https://<domain>/ PATCHER_DIST_ROOT=<app root.json> flutter build windows --release
-```
+1. Add `distribution/release-notes/X.Y.Z.txt` (paragraphs separated by blank lines) and, if a
+   platform has passed its checks in `AGENTS.md`, add it to `distribution/offer`. Merge to main.
+2. Tag the merge commit `app-vX.Y.Z` and push the tag. `.github/workflows/release.yml` builds
+   Linux on Ubuntu and Windows on a Windows runner, both with the origin and
+   `distribution/app-root.json` baked in, packages them, compiles the Windows installer with the
+   pinned Inno Setup image, checks every engine carries the origin and the root keys, and
+   attaches `patcher-X.Y.Z-staging.tar.gz` (and its SHA-256) to a release in this private
+   repository. No signing key is used on GitHub.
+3. From a workstation with SSH to the host: `tools/release-to-site.sh X.Y.Z`. It downloads the
+   archive, checks its checksum, origin, root keys and version, uploads it to the host's
+   `staging/app`, runs the `publish-app` Job with the online key held in the cluster, runs the
+   health check, and checks the live site.
 
-Package every platform into one staging directory, then publish once:
+`publish-app` stops before any change when the version is not newer than the published one, an
+offered platform has no packaged build, or a Windows installer has no Windows build. It copies objects and engines, signs the application manifests, writes `install.sh` and
+`install.ps1` with the origin filled in, moves `app/bootstrap/latest`, and finally writes the
+website's `site/data/catalog.json`: one download per packaged platform, marked verified only
+when offered, and release notes accumulated across releases.
 
-```
-patcher package-app <linux bundle>   --version X.Y.Z --os linux   --arch x64 --staging <dir>
-patcher package-app <windows bundle> --version X.Y.Z --os windows --arch x64 --staging <dir>
-patcher publish-app <dir> --root <app root.json> --key <online key> --repository <repo> \
-    --origin https://<domain>/ --offer linux-x64 --notes notes.txt [--windows-setup <setup.exe>]
-```
-
-On appsynergy-server this runs as the `publish-app` Job (`../deploy/README.md`).
-
-`publish-app` refuses a version that is not newer than the published one, an `--offer` for a
-platform with no packaged build, and a Windows installer without a Windows build, before
-anything changes. It copies objects and engines (staging may be read-only), signs the
-application manifests, writes `install.sh` and `install.ps1` with the origin filled in, moves
-`app/bootstrap/latest`, and finally writes the website's `site/data/catalog.json`: one download
-per packaged platform, marked verified only when offered, and release notes accumulated across
-releases. Offer a platform only after its checks in `AGENTS.md` pass.
-
-Windows installer, compiled with Inno Setup 6 (`iscc`, or the pinned `amake/innosetup` image):
-
-```
-iscc /DAppVersion=X.Y.Z /DOrigin=https://<domain>/ /DEngineExe=<patcher-engine.exe> windows/universal-patcher.iss
-```
+`distribution/app-root.json` is the public half of the release keys (`patcher init-root`). The
+root key that signs it is kept offline; the online key exists only in the cluster's
+`release-signing` Secret.
 
 ## Verified
 
