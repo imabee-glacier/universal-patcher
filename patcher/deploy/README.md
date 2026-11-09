@@ -41,8 +41,13 @@ routes to this host; never `.128` and above).
    `kustomize edit set image patcher-front=ghcr.io/imabee-glacier/patcher-front@sha256:<digest>`
    (same for `patcher-cli`, and in `publish-app.yaml`).
 5. `tools/deploy-preflight.sh <appsynergy-rs checkout>` must pass.
-6. On the host, create the volumes owned by the uid that writes them, the host route, and the
-   Secrets (online keys only; root keys stay offline; nothing is echoed or tracked):
+6. Create the patcher release keys on a workstation, never on the server:
+   `patcher init-root <dir>` writes `root-key.pem` (signs only `root.json`; move it to offline
+   storage), `online-key.pem` (the only key the cluster receives) and `root.json` (public; also
+   baked into every build as `PATCHER_DIST_ROOT`). Game release keys are added the same way when
+   a game release exists; until then the jobs skip the empty game repository.
+7. On the host, create the volumes owned by the uid that writes them, the host route, and the
+   Secret (the online key and public root only; nothing is echoed or tracked):
 
    ```bash
    install -d -o 65532 -g 65532 -m 0755 /var/lib/appsynergy/volumes/patcher-repository/_data \
@@ -52,15 +57,14 @@ routes to this host; never `.128` and above).
    install -d -o 65532 -g 65532 -m 0755 /var/lib/appsynergy/volumes/patcher-staging/_data
    ip route replace <address>/32 dev br-pub
    kubectl -n universal-patcher create secret generic release-signing \
-       --from-file=app-root.json --from-file=app-online.pem \
-       --from-file=root.json --from-file=online.pem
+       --from-file=app-root.json=root.json --from-file=app-online.pem=online-key.pem
    kubectl -n universal-patcher create secret generic release-backup \
        --from-file=rclone.conf --from-literal=destination=<remote:path>
    ```
 
    Make the route persistent the way `ops/network/30-br-pub.network` does for the other /32s.
-7. `kubectl apply -k deploy/k3s`, then publish the first release (below).
-8. Verify from off the host:
+8. `kubectl apply -k deploy/k3s`, then publish the first release (below).
+9. Verify from off the host:
 
    ```bash
    kubectl -n universal-patcher exec deploy/front -- ip route get 1.1.1.1   # src <address>
@@ -101,7 +105,7 @@ Windows installer without a Windows build, before it changes anything. The websi
   published catalog, offers nothing for an unverified platform, and does not scroll sideways at
   720 x 560.
 - The Caddyfile adapts to a single Let's Encrypt issuer.
-- `kubectl kustomize` renders; kubeconform (Kubernetes 1.34.1, strict) accepts every resource
+- `kubectl kustomize` renders; kubeconform (Kubernetes 1.33, the host's k3s v1.33.13; strict) accepts every resource
   except the Multus attachment, which has no published schema.
 - The publish Job's argument assembly was run under the CLI image's shell.
 

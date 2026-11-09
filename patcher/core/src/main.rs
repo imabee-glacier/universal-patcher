@@ -125,6 +125,14 @@ enum Command {
         #[arg(long)]
         windows_setup: Option<PathBuf>,
     },
+    /// Create a production signing root: an offline root key, an online key, and root.json.
+    InitRoot {
+        /// New directory to hold the keys; keep it off any server.
+        dir: PathBuf,
+        /// Days until root.json expires and must be re-signed with the root key.
+        #[arg(long, default_value_t = 365)]
+        days: u64,
+    },
     /// Probe the public origin and write the website's health status.
     Health {
         /// Public origin, ending in /.
@@ -345,6 +353,14 @@ fn execute() -> Result<()> {
                 ),
             )?;
             println!("Published Universal Patcher {version} as metadata version {metadata}.");
+        }
+        Command::InitRoot { dir, days } => {
+            let root =
+                tokio::runtime::Runtime::new()?.block_on(publisher::init_root(&dir, days))?;
+            println!(
+                "Wrote {}.\nroot-key.pem signs only root.json: move it to offline storage.\nonline-key.pem is the key publishing and renewal jobs receive.",
+                root.display()
+            );
         }
         Command::Health { origin, output } => {
             let status = tokio::runtime::Runtime::new()?

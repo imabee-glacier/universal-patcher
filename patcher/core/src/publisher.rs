@@ -439,57 +439,97 @@ pub async fn renew(root: &Path, keys: Vec<PathBuf>, repository: &Path) -> Result
     promote(root, keys, &files, repository).await
 }
 /// Generates independent local test keys. Never used as a production trust bootstrap.
-pub async fn fixture_root(dir: &Path) -> Result<PathBuf> {
-    fs::create_dir_all(dir)?;
-    let key_path = dir.join("fixture-key.pem");
-    ensure!(!key_path.exists(), "Fixture key already exists");
+fn generate_key(path: &Path) -> Result<LocalKeySource> {
+    ensure!(!path.exists(), "{} already exists", path.display());
     let document =
         aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(&aws_lc_rs::rand::SystemRandom::new())
             .map_err(|e| anyhow::anyhow!("Key generation failed: {e}"))?;
-    fs::write(&key_path, document.as_ref())?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    let key = LocalKeySource {
-        path: key_path.clone(),
-    };
+    let mut file = options.open(path)?;
+    std::io::Write::write_all(&mut file, document.as_ref())?;
+    file.sync_all()?;
+    Ok(LocalKeySource {
+        path: path.to_owned(),
+    })
+}
+
+async fn key_entry(key: &LocalKeySource) -> Result<(String, serde_json::Value)> {
     let signer = key
         .as_sign()
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let public = signer.tuf_key();
-    let id = public.key_id()?;
-    let role = serde_json::json!({"keyids":[id],"threshold":1});
-    let expires =
-        (jiff::Timestamp::now() + std::time::Duration::from_secs(365 * 86400)).to_string();
-    let key_id = serde_json::to_value(&id)?
+    let id = serde_json::to_value(public.key_id()?)?
         .as_str()
         .context("Invalid key id")?
         .to_owned();
+    Ok((id, serde_json::to_value(public)?))
+}
+
+/// Writes a signed `root.json` delegating the root role to `root_key` and the targets,
+/// snapshot and timestamp roles to `online_key` (which may be the same key).
+async fn write_root(
+    path: &Path,
+    root_key: LocalKeySource,
+    online_key: &LocalKeySource,
+    days: u64,
+) -> Result<()> {
+    let (root_id, root_public) = key_entry(&root_key).await?;
+    let (online_id, online_public) = key_entry(online_key).await?;
+    let expires =
+        (jiff::Timestamp::now() + std::time::Duration::from_secs(days * 86400)).to_string();
+    let online_role = serde_json::json!({"keyids": [online_id], "threshold": 1});
     let root: Root = serde_json::from_value(serde_json::json!({
         "_type": "root",
         "spec_version": "1.0.0",
         "version": 1,
         "expires": expires,
         "consistent_snapshot": true,
-        "keys": { key_id: public },
+        "keys": { root_id.clone(): root_public, online_id: online_public },
         "roles": {
-            "root": role,
-            "targets": role,
-            "snapshot": role,
-            "timestamp": role
+            "root": {"keyids": [root_id], "threshold": 1},
+            "targets": online_role,
+            "snapshot": online_role,
+            "timestamp": online_role
         }
     }))?;
     let signed = SignedRole::new(
         root.clone(),
         &KeyHolder::Root(root),
-        &[Box::new(key)],
+        &[Box::new(root_key)],
         &aws_lc_rs::rand::SystemRandom::new(),
     )
     .await?;
+    crate::storage::atomic_write_public(path, signed.buffer())
+}
+
+/// Test repositories: one key holds every role.
+pub async fn fixture_root(dir: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let key = generate_key(&dir.join("fixture-key.pem"))?;
+    let online = LocalKeySource {
+        path: key.path.clone(),
+    };
     let path = dir.join("root.json");
-    atomic_write(&path, signed.buffer())?;
+    write_root(&path, key, &online, 365).await?;
+    Ok(path)
+}
+
+/// A production repository: `root-key.pem` signs only `root.json` and belongs offline;
+/// `online-key.pem` signs targets, snapshot and timestamp and is the only key a publishing
+/// or renewal job receives. Refuses to overwrite any existing file in `dir`.
+pub async fn init_root(dir: &Path, days: u64) -> Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join("root.json");
+    ensure!(!path.exists(), "{} already exists", path.display());
+    let root_key = generate_key(&dir.join("root-key.pem"))?;
+    let online_key = generate_key(&dir.join("online-key.pem"))?;
+    write_root(&path, root_key, &online_key, days).await?;
     Ok(path)
 }

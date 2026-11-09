@@ -31,8 +31,20 @@ fi
 resolved="$(dig +short A "$domain" | sort -u | tr '\n' ' ')"
 if [ "$resolved" = "$start " ]; then pass "$domain resolves only to $start"; else fail "$domain resolves to '${resolved% }', expected $start"; fi
 if [ -n "$(dig +short AAAA "$domain")" ]; then fail "$domain has an AAAA record; the front has no IPv6 address"; else pass "no AAAA record"; fi
-caa="$(dig +short CAA "$domain")"
-if [ -z "$caa" ] || grep -q 'issue "letsencrypt.org"' <<<"$caa"; then pass "CAA allows Let's Encrypt (${caa:-none published})"; else fail "CAA does not allow letsencrypt.org: $caa"; fi
+# Certificate authorities use the nearest CAA set, walking up from the name (RFC 8659).
+caa="" caa_at="$domain"
+while [ -n "$caa_at" ]; do
+    caa="$(dig +short CAA "$caa_at")"
+    [ -n "$caa" ] && break
+    case "$caa_at" in *.*) caa_at="${caa_at#*.}" ;; *) caa_at="" ;; esac
+done
+if [ -z "$caa" ]; then
+    pass "no CAA anywhere above $domain; any CA may issue"
+elif grep -q 'issue "letsencrypt.org' <<<"$caa"; then
+    pass "CAA at $caa_at allows Let's Encrypt"
+else
+    fail "CAA at $caa_at does not allow letsencrypt.org"
+fi
 
 if python3 - "$exposure" "$start" "$domain" <<'EOF'; then
 import sys, tomllib

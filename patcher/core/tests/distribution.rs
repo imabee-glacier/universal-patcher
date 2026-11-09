@@ -81,8 +81,11 @@ impl Env {
             .unwrap()
             .block_on(publisher::fixture_root(&t.path().join("keys")))
             .unwrap();
-        let origin = serve(t.path().join("repo"));
         let key = t.path().join("keys/fixture-key.pem");
+        Self::with(t, root, key)
+    }
+    fn with(t: tempfile::TempDir, root: PathBuf, key: PathBuf) -> Self {
+        let origin = serve(t.path().join("repo"));
         Self {
             t,
             origin,
@@ -524,4 +527,50 @@ fn health_reports_what_the_public_origin_serves() {
             .is_err(),
         "plain HTTP off loopback is refused"
     );
+}
+
+#[test]
+fn production_root_keeps_the_root_key_out_of_publishing() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("signing");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let root = rt.block_on(publisher::init_root(&dir, 365)).unwrap();
+    let mode = |p: &str| fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode("root-key.pem"), 0o600);
+    assert_eq!(mode("online-key.pem"), 0o600);
+    assert_eq!(mode("root.json"), 0o644);
+
+    let signed: serde_json::Value = serde_json::from_slice(&fs::read(&root).unwrap()).unwrap();
+    let roles = &signed["signed"]["roles"];
+    assert_ne!(roles["root"]["keyids"], roles["targets"]["keyids"]);
+    for role in ["snapshot", "timestamp"] {
+        assert_eq!(roles[role]["keyids"], roles["targets"]["keyids"]);
+    }
+
+    // Nothing in the directory is ever overwritten.
+    let before = fs::read(dir.join("root-key.pem")).unwrap();
+    assert!(rt.block_on(publisher::init_root(&dir, 365)).is_err());
+    assert_eq!(fs::read(dir.join("root-key.pem")).unwrap(), before);
+
+    // The root key alone cannot publish.
+    let env = Env::with(t, root, dir.join("root-key.pem"));
+    let (os, arch) = app::platform().unwrap();
+    let build = env.t.path().join("build-1.0.0");
+    bundle(&build, true);
+    let staging = env.t.path().join("staging-1.0.0");
+    distribution::package_app(&build, "1.0.0", os, arch, &staging).unwrap();
+    assert!(
+        env.publish(&staging, &distribution::Listing::default())
+            .is_err()
+    );
+    assert!(!env.t.path().join("repo/app/bootstrap/latest").exists());
+
+    // The online key publishes, and the result installs against the root.
+    let env = Env {
+        key: dir.join("online-key.pem"),
+        ..env
+    };
+    env.release("1.0.0", true);
+    ok(&env.cli(&["install"]));
+    assert_eq!(env.state().current.as_deref(), Some("1.0.0"));
 }
