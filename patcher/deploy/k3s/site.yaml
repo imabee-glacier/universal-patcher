@@ -28,8 +28,8 @@ spec:
       "ipam": {
         "type": "host-local",
         "ranges": [ [ { "subnet": "64.112.14.0/24",
-                        "rangeStart": "64.112.14.0",
-                        "rangeEnd": "64.112.14.0" } ] ],
+                        "rangeStart": "64.112.14.67",
+                        "rangeEnd": "64.112.14.67" } ] ],
         "routes": [ { "dst": "0.0.0.0/1", "gw": "64.112.14.1" },
                     { "dst": "128.0.0.0/1", "gw": "64.112.14.1" } ]
       }
@@ -41,5 +41,5 @@ metadata:
   name: patcher-site
   namespace: universal-patcher
 data:
-  PATCHER_DOMAIN: example.invalid
-  PATCHER_ORIGIN: https://example.invalid/
+  PATCHER_DOMAIN: hive.imabee.com
+  PATCHER_ORIGIN: https://hive.imabee.com/
