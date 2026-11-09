@@ -42,7 +42,7 @@ spec:
             # be in the bounding set for that exec to work.
             capabilities: {drop: ["ALL"], add: ["NET_BIND_SERVICE"]}
           volumeMounts:
-            - {name: repository, mountPath: /srv/repository, readOnly: true}
+            - {name: data, mountPath: /srv/repository, subPath: repository, readOnly: true}
             - {name: caddy-data, mountPath: /data}
             - {name: caddy-config, mountPath: /config}
           # Readiness needs the certificate (the kubelet connects by address; Caddy answers
@@ -62,8 +62,8 @@ spec:
             limits: {cpu: "2", memory: 512Mi}
       terminationGracePeriodSeconds: 30
       volumes:
-        - name: repository
-          persistentVolumeClaim: {claimName: patcher-repository, readOnly: true}
+        - name: data
+          persistentVolumeClaim: {claimName: patcher-data, readOnly: true}
         - name: caddy-data
           persistentVolumeClaim: {claimName: patcher-caddy}
         - name: caddy-config

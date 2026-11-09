@@ -49,12 +49,12 @@ spec:
               env:
                 - {name: TMPDIR, value: /tmp}
               volumeMounts:
-                - {name: repository, mountPath: /srv/repository}
+                - {name: data, mountPath: /srv/repository, subPath: repository}
                 - {name: keys, mountPath: /keys, readOnly: true}
                 - {name: tmp, mountPath: /tmp}
           volumes:
-            - name: repository
-              persistentVolumeClaim: {claimName: patcher-repository}
+            - name: data
+              persistentVolumeClaim: {claimName: patcher-data}
             - name: keys
               secret: {secretName: release-signing, defaultMode: 0400}
             - name: tmp
@@ -99,10 +99,10 @@ spec:
               resources:
                 limits: {cpu: 200m, memory: 64Mi}
               volumeMounts:
-                - {name: repository, mountPath: /srv/repository, readOnly: true}
+                - {name: data, mountPath: /srv/repository, subPath: repository, readOnly: true}
           volumes:
-            - name: repository
-              persistentVolumeClaim: {claimName: patcher-repository, readOnly: true}
+            - name: data
+              persistentVolumeClaim: {claimName: patcher-data, readOnly: true}
 ---
 # Probes the public origin as users reach it and writes the timestamped status the website
 # shows. The website treats a result older than 15 minutes as unknown, so a stopped job reads
@@ -146,10 +146,10 @@ spec:
               resources:
                 limits: {cpu: 200m, memory: 64Mi}
               volumeMounts:
-                - {name: repository, mountPath: /out, subPath: site/data}
+                - {name: data, mountPath: /out, subPath: repository/site/data}
           volumes:
-            - name: repository
-              persistentVolumeClaim: {claimName: patcher-repository}
+            - name: data
+              persistentVolumeClaim: {claimName: patcher-data}
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -205,13 +205,13 @@ spec:
                 requests: {cpu: 100m, memory: 128Mi}
                 limits: {cpu: "1", memory: 512Mi}
               volumeMounts:
-                - {name: repository, mountPath: /srv/repository, readOnly: true}
+                - {name: data, mountPath: /srv/repository, subPath: repository, readOnly: true}
                 - {name: config, mountPath: /config, readOnly: true}
                 - {name: filters, mountPath: /etc/backup, readOnly: true}
                 - {name: tmp, mountPath: /tmp}
           volumes:
-            - name: repository
-              persistentVolumeClaim: {claimName: patcher-repository, readOnly: true}
+            - name: data
+              persistentVolumeClaim: {claimName: patcher-data, readOnly: true}
             - name: config
               secret:
                 secretName: release-backup

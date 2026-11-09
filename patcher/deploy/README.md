@@ -13,7 +13,7 @@ the internet, and no signing keys in the public Pod.
 | `front/Dockerfile` | Caddy 2.11.9 pinned by digest, with the website built in, running as uid 1000. |
 | `Dockerfile` | Publisher CLI for the jobs (`patcher-cli`). |
 | `k3s/namespace.yaml` | `universal-patcher`, Pod Security `restricted`. |
-| `k3s/storage.yaml` | Local volumes: `patcher-repository` (250 GiB estimate), `patcher-caddy` (certificate state), `patcher-staging` (builds waiting to publish). |
+| `k3s/storage.yaml` | Local volumes: `patcher-data` (everything published and everything waiting to be; 300 GiB estimate) and `patcher-caddy` (certificate state). Layout below. |
 | `k3s/site.yaml` | The deployment's two identifying values: the public address (Multus attachment on `br-pub`) and the domain. Placeholders until chosen. |
 | `k3s/front.yaml` | The front Deployment. |
 | `k3s/jobs.yaml` | `renew-metadata` (6-hourly, the only holder of signing keys), `check-expiry` (hourly, fails 12 h before any role expires), `check-health` (every 5 minutes, writes the status the website shows), `backup-repository` (daily rclone copy of everything published). |
@@ -21,6 +21,31 @@ the internet, and no signing keys in the public Pod.
 | `../tools/deploy-preflight.sh` | Stops before deploy while placeholders remain, DNS or CAA disagree, the firewall declaration is missing, or an image is not pinned. |
 | `../tools/front-check.sh` | Checks a running front from outside: protocols, TLS versions, headers, caching, Range resume, methods other than GET and HEAD, and hidden paths. |
 | `../tools/site-browser-check.sh` | Loads the website in Chromium and fails on any CSP violation or script error. |
+
+## Data layout
+
+Everything lives on one volume so publishing moves files into place within one filesystem.
+The front mounts only `repository/`, read-only; nothing under `staging/` is ever served.
+
+```
+/var/lib/appsynergy/volumes/patcher-data/_data/      PV patcher-data, uid 65532
+  repository/                    https://hive.imabee.com/
+    objects/                     game release objects: every file of the game and its packs,
+                                 content-addressed by BLAKE3 (objects/<hash>)
+    metadata/  targets/          signed TUF metadata and release manifests for game releases
+    app/                         patcher releases (same layout, plus bootstrap/ and setup/)
+    site/data/                   catalog.json (written by publishing), health.json (health job)
+    install.sh  install.ps1      one-line installers (written by publishing)
+  staging/
+    app/                         a packaged patcher release waiting for the publish-app Job
+    game/                        a prepared game release waiting to be signed and promoted
+/var/lib/appsynergy/volumes/patcher-caddy/_data/     PV patcher-caddy, uid 1000, certificate
+```
+
+A game release, base game and packs alike, reaches `repository/` only through the publisher:
+objects are verified, the manifest is signed, and `metadata/timestamp.json` moves last. Files
+copied into `repository/` by hand are not part of any release and no client will use them.
+The game repository is empty: no game release has been published.
 
 ## First deployment
 
@@ -50,11 +75,11 @@ routes to this host; never `.128` and above).
    Secret (the online key and public root only; nothing is echoed or tracked):
 
    ```bash
-   install -d -o 65532 -g 65532 -m 0755 /var/lib/appsynergy/volumes/patcher-repository/_data \
-       /var/lib/appsynergy/volumes/patcher-repository/_data/site \
-       /var/lib/appsynergy/volumes/patcher-repository/_data/site/data
+   D=/var/lib/appsynergy/volumes/patcher-data/_data
+   install -d -o 65532 -g 65532 -m 0755 "$D" "$D/repository" "$D/repository/objects" \
+       "$D/repository/metadata" "$D/repository/targets" "$D/repository/app" \
+       "$D/repository/site" "$D/repository/site/data" "$D/staging" "$D/staging/app" "$D/staging/game"
    install -d -o 1000 -g 1000 -m 0700 /var/lib/appsynergy/volumes/patcher-caddy/_data
-   install -d -o 65532 -g 65532 -m 0755 /var/lib/appsynergy/volumes/patcher-staging/_data
    ip route replace <address>/32 dev br-pub
    kubectl -n universal-patcher create secret generic release-signing \
        --from-file=app-root.json=root.json --from-file=app-online.pem=online-key.pem
@@ -81,8 +106,8 @@ Build and package each platform (`../distribution/README.md`), then upload stagi
 Job:
 
 ```bash
-rsync -a --delete staging/ root@144.217.66.212:/var/lib/appsynergy/volumes/patcher-staging/_data/current/
-ssh root@144.217.66.212 chown -R 65532:65532 /var/lib/appsynergy/volumes/patcher-staging/_data/current
+rsync -a --delete staging/ root@144.217.66.212:/var/lib/appsynergy/volumes/patcher-data/_data/staging/app/
+ssh root@144.217.66.212 chown -R 65532:65532 /var/lib/appsynergy/volumes/patcher-data/_data/staging/app
 kubectl create -f deploy/k3s/publish-app.yaml
 kubectl -n universal-patcher wait --for=condition=complete job -l app=publish-app --timeout=15m
 ```
