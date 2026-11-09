@@ -41,5 +41,5 @@ metadata:
   name: patcher-site
   namespace: universal-patcher
 data:
-  PATCHER_DOMAIN: hive.imabee.com
-  PATCHER_ORIGIN: https://hive.imabee.com/
+  PATCHER_DOMAIN: play.imabee.com
+  PATCHER_ORIGIN: https://play.imabee.com/
