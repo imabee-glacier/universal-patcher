@@ -1,5 +1,6 @@
 # Local volumes on appsynergy-server, under /var/lib/appsynergy/volumes. Nothing chowns at
-# startup and no Pod sets fsGroup: each directory is created owned by the uid that writes it
+# startup: each directory is created owned by the uid that writes it (the key-holding jobs set
+# fsGroup only to read their Secret, with OnRootMismatch, so the volume is never re-owned)
 # (deploy/README.md, "First deployment").
 #
 # patcher-data (uid 65532), one filesystem for everything published:
