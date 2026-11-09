@@ -1,0 +1,15 @@
+[Unit]
+Description=Ingress guard for the patcher front (64.112.14.67, play.imabee.com)
+Documentation=https://github.com/imabee-glacier/universal-patcher/tree/main/patcher/deploy/host
+After=nftables.service
+Wants=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/patcher-guard.nft
+ExecReload=/usr/sbin/nft -f /etc/nftables.d/patcher-guard.nft
+ExecStop=/usr/sbin/nft delete table inet patcher_guard
+
+[Install]
+WantedBy=multi-user.target

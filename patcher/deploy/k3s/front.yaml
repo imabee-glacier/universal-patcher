@@ -1,7 +1,7 @@
 # Public front on its own /32 (site.yaml): Caddy terminates TLS 1.2/1.3 and HTTP/3 with a
 # Let's Encrypt certificate, serves the website built into the image, and serves the release
-# repository from a read-only volume. exposure.toml declares 80/tcp (ACME HTTP-01 and the
-# redirect), 443/tcp and 443/udp for this address and nothing else.
+# repository from a read-only volume. deploy/host/patcher-guard.nft lets only 80/tcp (ACME
+# HTTP-01 and the redirect), 443/tcp and 443/udp reach this address.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

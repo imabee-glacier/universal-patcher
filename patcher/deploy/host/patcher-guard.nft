@@ -1,0 +1,33 @@
+#!/usr/sbin/nft -f
+# Ingress guard for the patcher front's public address, 64.112.14.67 (play.imabee.com).
+# Owned by imabee-glacier/universal-patcher; installed with tools/install-host.sh as
+# /etc/nftables.d/patcher-guard.nft and loaded by patcher-guard.service.
+#
+# Only 80/tcp (Let's Encrypt HTTP-01 and the redirect to HTTPS), 443/tcp and 443/udp (HTTP/3)
+# reach the front. Frames bridged to a Pod on br-pub traverse the host's forward hook, so this
+# filters the Pod's own address. The chain runs before the host's other forward chains
+# (priority -10) and only ever drops: `return` hands the packet back, and every other ruleset
+# at this hook still decides for itself. Traffic to any other address is not touched.
+
+# Idempotent replace: create, then delete, then define, in one transaction.
+table inet patcher_guard
+delete table inet patcher_guard
+
+table inet patcher_guard {
+  chain front {
+    # Replies to connections the front opened itself (ACME, DNS) and their related errors.
+    ct state established,related return
+    ct state invalid drop
+    # Path-MTU discovery and diagnostics; dropping them causes stalls under load.
+    icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } return
+    tcp dport 80 return comment "Let's Encrypt HTTP-01 and redirect to HTTPS"
+    tcp dport 443 return comment "website, installers and release files over HTTPS"
+    udp dport 443 return comment "HTTP/3"
+    drop
+  }
+
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    ip daddr 64.112.14.67 jump front
+  }
+}
