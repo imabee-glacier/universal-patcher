@@ -29,7 +29,7 @@ The front mounts only `repository/`, read-only; nothing under `staging/` is ever
 
 ```
 /var/lib/appsynergy/volumes/patcher-data/_data/      PV patcher-data, uid 65532
-  repository/                    https://hive.imabee.com/
+  repository/                    https://play.imabee.com/
     objects/                     game release objects: every file of the game and its packs,
                                  content-addressed by BLAKE3 (objects/<hash>)
     metadata/  targets/          signed TUF metadata and release manifests for game releases
