@@ -1,7 +1,7 @@
 // Loads the published website in Chromium and checks what a visitor sees: no Content Security
-// Policy violations or script errors, a verified Linux download with its one-line command,
-// release notes and a fresh service status from the published data, and no download offered
-// for a platform that has not been verified.
+// Policy violations or script errors, a verified Linux download with its one-line command and
+// no architecture question, release notes and a fresh service status from the published data,
+// the processor question on macOS only, and downloads only for platforms the catalog verifies.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 
@@ -20,10 +20,12 @@ const response = await page.goto(origin, { waitUntil: 'networkidle' });
 assert.equal(response.status(), 200);
 assert.match(response.headers()['content-security-policy'] ?? '', /require-trusted-types-for 'script'/);
 
+// Linux and Windows run the game on x64 only, so neither asks for an architecture.
 await page.click('[data-os="linux"]');
-await page.selectOption('#architecture', 'x86_64');
+assert.equal(await page.locator('.architecture').isVisible(), false, 'Linux asks no architecture');
 await page.locator('#download-link').waitFor({ state: 'visible' });
 assert.equal(await page.textContent('#command-text'), `curl -fsSL '${origin}install.sh' | bash`);
+assert.match(await page.textContent('#download-state'), /Linux · x64/);
 const catalog = await (await page.request.get(`${origin}data/catalog.json`)).json();
 const latest = catalog.releases.at(-1);
 const notes = await page.textContent('#release-notes');
@@ -31,10 +33,19 @@ assert.ok(notes.includes(`Version ${latest.version}`) && latest.notes.every(n =>
 assert.match(await page.textContent('#service-status'), /Services operational/);
 await page.screenshot({ path: `${shots}/site-linux.png`, fullPage: true });
 
+const offered = (os, arch) => catalog.downloads.some(d => d.os === os && d.arch === arch && d.verified);
 await page.click('[data-os="windows"]');
-await page.selectOption('#architecture', 'x86_64');
-assert.equal(await page.locator('#download-link').isVisible(), false, 'unverified platforms offer no download');
-assert.equal(await page.locator('#install-command').isVisible(), false);
+assert.equal(await page.locator('.architecture').isVisible(), false, 'Windows asks no architecture');
+assert.equal(await page.locator('#download-link').isVisible(), offered('windows', 'x86_64'), 'Windows download follows the catalog');
+
+// Only a Mac has two processors the game runs on.
+await page.click('[data-os="macos"]');
+await page.locator('.architecture').waitFor({ state: 'visible' });
+assert.deepEqual(await page.locator('#architecture option').evaluateAll(o => o.map(e => e.value)), ['', 'x86_64', 'aarch64']);
+await page.selectOption('#architecture', 'aarch64');
+assert.equal(await page.locator('#download-link').isVisible(), offered('macos', 'aarch64'), 'macOS download follows the catalog');
+assert.doesNotMatch(await page.textContent('.questions details:first-child p'), /ARM64|each architecture/);
+await page.click('[data-os="linux"]');
 
 await page.setViewportSize({ width: 720, height: 560 });
 await page.screenshot({ path: `${shots}/site-720x560.png` });
