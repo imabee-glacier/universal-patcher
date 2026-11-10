@@ -445,7 +445,7 @@ fn component_is_copied_into_the_destination_directory() {
     let dest = dir.path().join("EA Desktop");
     fs::create_dir(&dest).unwrap();
     let mut bytes = b"MZ".to_vec();
-    bytes.extend(std::iter::repeat(0).take(62));
+    bytes.extend(std::iter::repeat_n(0, 62));
     fs::write(&bundled, bytes).unwrap();
     place_component(&bundled, &dest).unwrap();
     assert_eq!(
