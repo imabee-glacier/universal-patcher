@@ -114,6 +114,25 @@ fn apply_progress(s: &mut Snapshot, p: Progress, elapsed: Duration) {
     s.files_total = p.files_total;
 }
 
+/// The installation to use without asking: a saved one that is still valid, or on first run
+/// the only one found. A saved installation that is gone, or several found, needs a choice.
+fn adopt(d: &crate::discovery::Discovery, had_saved: bool) -> Option<&crate::discovery::Candidate> {
+    match d.candidates.as_slice() {
+        [only] if !had_saved || only.source == "saved installation" => Some(only),
+        _ => None,
+    }
+}
+
+fn found_detail(c: &crate::discovery::Candidate) -> String {
+    if c.maintenance_supported {
+        "This is the installation the patcher looks after.".into()
+    } else {
+        "Updates and repair are not yet available on this platform, so the patcher leaves the game \
+         as it is."
+            .into()
+    }
+}
+
 struct Service {
     snapshot: Mutex<Snapshot>,
     config: Option<Config>,
@@ -395,28 +414,54 @@ impl Service {
             }
             return;
         }
-        let d = crate::discovery::discover(&crate::discovery::Probe::this_system(), None);
+        let layout = crate::app::Layout::for_user().ok();
+        let saved = layout.as_ref().and_then(crate::app::saved_installation);
+        let d =
+            crate::discovery::discover(&crate::discovery::Probe::this_system(), saved.as_deref());
+        let adopted = adopt(&d, saved.is_some()).cloned();
+        if let (Some(c), Some(layout)) = (&adopted, &layout)
+            && saved.as_deref() != Some(c.path.as_path())
+            && let Err(e) = crate::app::save_installation(layout, &c.path)
+        {
+            self.failure(&format!("Cannot save the game location: {e:#}"));
+            return;
+        }
         self.update(|s| {
-            let found = !d.candidates.is_empty();
-            s.checked = d.checked;
-            s.candidates = d.candidates;
             s.state = "setup".into();
             s.phase = "setup".into();
             s.actions = vec!["Discover".into(), "ConfirmInstall".into()];
-            s.title = if found {
-                "Game found"
-            } else {
-                "Choose your game folder"
+            s.next_action = "No game files are changed until maintenance is validated for this \
+                             platform."
+                .into();
+            match &adopted {
+                Some(c) => {
+                    s.path = Some(c.path.display().to_string());
+                    s.title = "Game found".into();
+                    s.detail = found_detail(c);
+                    s.candidates = vec![];
+                }
+                None => {
+                    s.path = None;
+                    (s.title, s.detail) = if !d.candidates.is_empty() && saved.is_some() {
+                        (
+                            "Your saved game folder is gone".into(),
+                            "Choose which installation to look after instead.".into(),
+                        )
+                    } else if !d.candidates.is_empty() {
+                        (
+                            "Choose your installation".into(),
+                            "More than one copy of The Sims 4 was found.".into(),
+                        )
+                    } else {
+                        (
+                            "Choose your game folder".into(),
+                            "The Sims 4 was not found in the usual places listed below.".into(),
+                        )
+                    };
+                    s.candidates = d.candidates.clone();
+                }
             }
-            .into();
-            s.detail = if found {
-                "Confirm the installation this patcher should maintain."
-            } else {
-                "No verified installation was found in the usual locations."
-            }
-            .into();
-            s.next_action =
-                "A verified release feed is required before any game files change.".into();
+            s.checked = d.checked.clone();
         });
     }
     fn start(self: &Arc<Self>, resume: bool, full_verify: bool) {
@@ -726,11 +771,12 @@ impl Service {
                     "folder picker",
                     crate::discovery::Probe::this_system().variant,
                 )?;
+                crate::app::save_installation(&crate::app::Layout::for_user()?, &c.path)?;
                 self.update(|s| {
                     s.path = Some(c.path.display().to_string());
                     s.title = "Game found".into();
-                    s.detail = "Maintenance for this platform is not yet validated.".into();
-                    s.next_action = "No game files have been changed.".into();
+                    s.detail = found_detail(&c);
+                    s.candidates = vec![];
                 });
             }
             "Connect" | "Disconnect" => {
@@ -816,5 +862,47 @@ mod tests {
         assert_eq!(s.bytes_per_second, 5);
         apply_progress(&mut s, progress("applying"), Duration::from_secs(2));
         assert_eq!(s.bytes_per_second, 0);
+    }
+
+    fn candidate(path: &str, source: &str) -> crate::discovery::Candidate {
+        crate::discovery::Candidate {
+            path: path.into(),
+            identity: path.into(),
+            variant: "windows-native".into(),
+            source: source.into(),
+            maintenance_supported: false,
+        }
+    }
+
+    fn found(candidates: Vec<crate::discovery::Candidate>) -> crate::discovery::Discovery {
+        crate::discovery::Discovery {
+            candidates,
+            checked: vec![],
+        }
+    }
+
+    #[test]
+    fn the_only_installation_found_is_used_without_asking() {
+        let d = found(vec![candidate("C:/Games/The Sims 4", "EA app")]);
+        assert_eq!(adopt(&d, false).map(|c| c.source.as_str()), Some("EA app"));
+    }
+
+    #[test]
+    fn a_valid_saved_installation_is_used_without_asking() {
+        let d = found(vec![candidate("D:/Sims", "saved installation")]);
+        assert!(adopt(&d, true).is_some());
+    }
+
+    #[test]
+    fn several_installations_or_a_lost_saved_one_need_a_choice() {
+        let two = found(vec![
+            candidate("C:/A", "EA app"),
+            candidate("D:/B", "Steam library"),
+        ]);
+        assert!(adopt(&two, false).is_none());
+        // The saved folder is gone and something else was found: confirm the replacement.
+        let replacement = found(vec![candidate("C:/A", "EA app")]);
+        assert!(adopt(&replacement, true).is_none());
+        assert!(adopt(&found(vec![]), false).is_none());
     }
 }

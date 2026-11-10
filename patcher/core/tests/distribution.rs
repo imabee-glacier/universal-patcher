@@ -618,3 +618,31 @@ fn only_platforms_the_game_runs_on_are_packaged_or_accepted() {
         .to_string();
     assert!(err.contains("does not run on linux-arm64"), "{err}");
 }
+
+#[test]
+fn the_confirmed_installation_is_saved_and_survives_uninstall() {
+    let t = tempfile::tempdir().unwrap();
+    let layout = app::Layout::at(t.path().join("data"));
+    assert_eq!(app::saved_installation(&layout), None);
+    let game = t.path().join("The Sims 4");
+    app::save_installation(&layout, &game).unwrap();
+    assert_eq!(app::saved_installation(&layout), Some(game.clone()));
+
+    // A damaged or foreign record is ignored rather than trusted.
+    fs::write(
+        layout.installation(),
+        b"{\"schema\":1,\"path\":\"x\",\"path\":\"y\"}",
+    )
+    .unwrap();
+    assert_eq!(app::saved_installation(&layout), None);
+    fs::write(layout.installation(), b"{\"schema\":2,\"path\":\"x\"}").unwrap();
+    assert_eq!(app::saved_installation(&layout), None);
+
+    // Uninstall keeps game choices unless data is removed.
+    app::save_installation(&layout, &game).unwrap();
+    fs::create_dir_all(layout.root.join("bin")).unwrap();
+    app::uninstall(&layout, false).unwrap();
+    assert_eq!(app::saved_installation(&layout), Some(game));
+    app::uninstall(&layout, true).unwrap();
+    assert!(!layout.root.exists());
+}

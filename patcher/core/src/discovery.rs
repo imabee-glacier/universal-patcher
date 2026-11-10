@@ -53,6 +53,35 @@ pub fn library_paths(text: &str) -> Vec<PathBuf> {
         .map(|w| PathBuf::from(&w[1]))
         .collect()
 }
+/// Joins a `/`-separated relative path one component at a time, so every OS gets its own
+/// separator in paths shown to people.
+fn join(base: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(base.to_path_buf(), |p, c| p.join(c))
+}
+
+/// A canonical path as people write it. Canonical Windows paths carry the `\\?\` prefix; it is
+/// removed where the plain form names the same place (a drive path under the length limit, or a
+/// network share). Everywhere else the path is returned unchanged.
+pub fn plain(path: PathBuf) -> PathBuf {
+    if cfg!(windows)
+        && let Some(text) = path.to_str()
+        && let Some(plain) = plain_windows(text)
+    {
+        return PathBuf::from(plain);
+    }
+    path
+}
+
+fn plain_windows(text: &str) -> Option<String> {
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        return Some(format!(r"\\{share}"));
+    }
+    let rest = text.strip_prefix(r"\\?\")?;
+    (rest.len() < 260 && rest.as_bytes().get(1) == Some(&b':')).then(|| rest.to_owned())
+}
+
 /// Where to look for installations on one system, and which variant a match there is.
 #[derive(Debug, Clone)]
 pub struct Probe {
@@ -78,7 +107,7 @@ impl Probe {
             ]
         };
         Self {
-            steam_roots: roots.iter().map(|r| home.join(r)).collect(),
+            steam_roots: roots.iter().map(|r| join(home, r)).collect(),
             direct: Vec::new(),
             variant: if macos {
                 "macos-native"
@@ -96,10 +125,10 @@ impl Probe {
             steam_roots.push(pf.join("Steam"));
         }
         if let Some(pf) = program_files {
-            direct.push(pf.join("EA Games/The Sims 4"));
+            direct.push(join(pf, "EA Games/The Sims 4"));
         }
         if let Some(pf) = program_files_x86 {
-            direct.push(pf.join("Origin Games/The Sims 4"));
+            direct.push(join(pf, "Origin Games/The Sims 4"));
         }
         Self {
             steam_roots,
@@ -127,15 +156,15 @@ impl Probe {
 
 pub fn validate(path: &Path, source: &str, variant: &str) -> Result<Candidate> {
     ensure!(
-        path.join("Data/Client/ClientFullBuild0.package").is_file(),
+        join(path, "Data/Client/ClientFullBuild0.package").is_file(),
         "Base-game data marker not found"
     );
     ensure!(
-        path.join("Game/Bin/TS4_x64.exe").is_file(),
+        join(path, "Game/Bin/TS4_x64.exe").is_file(),
         "Sims 4 executable marker not found"
     );
     Ok(Candidate {
-        path: fs::canonicalize(path)?,
+        path: plain(fs::canonicalize(path)?),
         identity: crate::engine::identity(path)?,
         variant: variant.into(),
         source: source.into(),
@@ -157,7 +186,7 @@ pub fn discover(probe: &Probe, saved: Option<&Path>) -> Discovery {
     let mut libraries = BTreeSet::new();
     for root in &probe.steam_roots {
         libraries.insert(root.clone());
-        let vdf = root.join("steamapps/libraryfolders.vdf");
+        let vdf = join(root, "steamapps/libraryfolders.vdf");
         result.checked.push(vdf.clone());
         if let Ok(text) = fs::read_to_string(vdf) {
             libraries.extend(library_paths(&text));
@@ -165,7 +194,7 @@ pub fn discover(probe: &Probe, saved: Option<&Path>) -> Discovery {
     }
     let mut places: Vec<(PathBuf, &str)> = libraries
         .into_iter()
-        .map(|root| (root.join("steamapps/common/The Sims 4"), "Steam library"))
+        .map(|root| (join(&root, "steamapps/common/The Sims 4"), "Steam library"))
         .collect();
     places.extend(probe.direct.iter().map(|d| (d.clone(), "EA app")));
     let mut identities = BTreeSet::new();
@@ -178,4 +207,36 @@ pub fn discover(probe: &Probe, saved: Option<&Path>) -> Discovery {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_paths_are_shown_without_the_verbatim_prefix() {
+        assert_eq!(
+            plain_windows(r"\\?\C:\Program Files\EA Games\The Sims 4").as_deref(),
+            Some(r"C:\Program Files\EA Games\The Sims 4")
+        );
+        assert_eq!(
+            plain_windows(r"\\?\UNC\nas\games\The Sims 4").as_deref(),
+            Some(r"\\nas\games\The Sims 4")
+        );
+        // Too long for the plain form, or not a drive path: kept as is.
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        assert_eq!(plain_windows(&long), None);
+        assert_eq!(plain_windows(r"\\?\Volume{0}\games"), None);
+        assert_eq!(plain_windows(r"C:\already\plain"), None);
+    }
+
+    #[test]
+    fn relative_paths_join_per_component() {
+        let joined = join(Path::new("base"), "steamapps/common/The Sims 4");
+        let parts: Vec<_> = joined
+            .components()
+            .map(|c| c.as_os_str().to_owned())
+            .collect();
+        assert_eq!(parts, ["base", "steamapps", "common", "The Sims 4"]);
+    }
 }
