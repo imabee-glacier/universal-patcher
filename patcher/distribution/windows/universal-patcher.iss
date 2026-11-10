@@ -35,6 +35,8 @@ OutputBaseFilename=UniversalPatcherSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; The app icon, copied beside this script by the release workflow.
+SetupIconFile=app_icon.ico
 
 [Files]
 Source: "{#EngineExe}"; DestDir: "{tmp}"; DestName: "patcher-engine.exe"; Flags: deleteafterinstall

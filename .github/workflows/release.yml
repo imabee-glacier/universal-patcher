@@ -134,7 +134,7 @@ jobs:
       - name: Windows installer
         run: |
           w="$RUNNER_TEMP/inno"; mkdir -p "$w"
-          cp distribution/windows/universal-patcher.iss "$w/"
+          cp distribution/windows/universal-patcher.iss app/windows/runner/resources/app_icon.ico "$w/"
           cp "$RUNNER_TEMP/staging/app/packages/bootstrap/$VERSION/windows-x64/patcher-engine.exe" "$w/"
           chmod -R a+rwX "$w"
           docker run --rm -v "$w:/work" \

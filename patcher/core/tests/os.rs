@@ -166,3 +166,14 @@ fn linux_probe_reports_every_location_checked() {
         );
     }
 }
+
+#[test]
+fn turning_off_maintenance_never_warns_where_it_cannot_be_turned_on() {
+    let t = tempfile::tempdir().unwrap();
+    let (engine, config) = (t.path().join("engine"), t.path().join("config.json"));
+    if cfg!(target_os = "linux") {
+        return; // Linux schedules maintenance; its units are covered by the systemd tests.
+    }
+    assert!(patcher_core::os::set_schedule(false, &engine, &config).is_ok());
+    assert!(patcher_core::os::set_schedule(true, &engine, &config).is_err());
+}

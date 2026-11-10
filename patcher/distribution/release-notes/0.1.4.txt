@@ -1,0 +1,5 @@
+Windows is now offered: install with the setup program or with one PowerShell command, no administrator rights needed. Updates and repair of the game are not yet available on Windows; the patcher finds your game and leaves it as it is.
+
+Uninstalling on Windows now removes the program completely, and no longer shows a warning about background maintenance.
+
+The app and its setup program use the Universal Patcher icon.
