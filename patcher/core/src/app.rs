@@ -26,6 +26,8 @@ const DIST_ORIGIN: &str = include_str!(concat!(env!("OUT_DIR"), "/dist_origin.tx
 const DIST_ROOT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dist_root.json"));
 /// How long a newly activated release has to show its interface.
 pub const STARTUP_CHECK: Duration = Duration::from_secs(60);
+/// The release version of this build (the release workflow sets it from the tag).
+pub const APP_VERSION: &str = env!("PATCHER_APP_VERSION");
 
 pub fn platform() -> Result<(&'static str, &'static str)> {
     let os = match std::env::consts::OS {
@@ -135,6 +137,11 @@ impl Layout {
     /// Game maintenance configuration written when an installation is confirmed.
     pub fn config(&self) -> PathBuf {
         self.root.join("config.json")
+    }
+    /// The game installation the user confirmed, or the only one found. A game choice: kept
+    /// on uninstall unless data is removed.
+    pub fn installation(&self) -> PathBuf {
+        self.root.join("installation.json")
     }
     pub fn health(&self, v: &str) -> PathBuf {
         self.root.join("health").join(v)
@@ -807,6 +814,29 @@ pub fn uninstall(layout: &Layout, remove_data: bool) -> Result<()> {
         remove_dir_if_present(&layout.root)?;
     }
     Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedInstallation {
+    schema: u32,
+    path: PathBuf,
+}
+
+/// The saved game installation, if one was saved and the record is readable.
+pub fn saved_installation(layout: &Layout) -> Option<PathBuf> {
+    let bytes = fs::read(layout.installation()).ok()?;
+    let value = crate::strict_json::parse(&bytes).ok()?;
+    let saved: SavedInstallation = serde_json::from_value(value).ok()?;
+    (saved.schema == 1).then_some(saved.path)
+}
+
+pub fn save_installation(layout: &Layout, path: &Path) -> Result<()> {
+    let record = SavedInstallation {
+        schema: 1,
+        path: path.to_owned(),
+    };
+    atomic_write(&layout.installation(), &serde_json::to_vec_pretty(&record)?)
 }
 
 /// Called by a running release once its interface is up.

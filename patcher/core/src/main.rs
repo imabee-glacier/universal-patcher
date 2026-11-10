@@ -12,7 +12,7 @@ use patcher_core::{
 };
 use std::{fs, path::PathBuf};
 #[derive(Parser)]
-#[command(version, about = "Verified file maintenance and release preparation")]
+#[command(version = app::APP_VERSION, about = "Verified file maintenance and release preparation")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

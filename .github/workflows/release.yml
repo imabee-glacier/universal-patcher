@@ -44,6 +44,9 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Every binary reports the release version from the tag.
+      PATCHER_APP_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         working-directory: patcher
@@ -64,6 +67,9 @@ jobs:
     needs: version
     runs-on: windows-2025
     timeout-minutes: 60
+    env:
+      # Every binary reports the release version from the tag.
+      PATCHER_APP_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         shell: pwsh
@@ -98,6 +104,7 @@ jobs:
         working-directory: patcher
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PATCHER_APP_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -113,8 +120,11 @@ jobs:
           target/release/patcher package-app "$b/windows-x64" --version "$VERSION" --os windows --arch x64 --staging "$s/packages"
           cp "distribution/release-notes/$VERSION.txt" "$s/notes.txt"
           cp distribution/offer "$s/offer"
-      - name: Engines carry the published origin and root
+      - name: Engines carry the published origin, root and version
         run: |
+          [ "$(target/release/patcher --version)" = "universal-patcher $VERSION" ] || { echo "::error::wrong version"; exit 1; }
+          bundle_engine="$RUNNER_TEMP/builds/linux/bundle/lib/patcher-engine"
+          [ "$("$bundle_engine" --version)" = "universal-patcher $VERSION" ] || { echo "::error::Linux engine reports $("$bundle_engine" --version)"; exit 1; }
           for engine in "$RUNNER_TEMP"/staging/app/packages/bootstrap/"$VERSION"/*/patcher-engine*; do
             grep -q --text "$PATCHER_DIST_ORIGIN" "$engine" || { echo "::error::$engine lacks the origin"; exit 1; }
             for key in $(jq -r '.signed.keys | keys[]' distribution/app-root.json); do

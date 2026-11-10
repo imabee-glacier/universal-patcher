@@ -187,4 +187,51 @@ void main() {
     }
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('a found game is used; the folder picker leads only when none is found', (
+    tester,
+  ) async {
+    final core = FakeCore();
+    Map<String, dynamic> setup(Map<String, dynamic> extra) => {
+      'state': 'setup',
+      'title': 'Game found',
+      'detail': '',
+      'actions': ['Discover', 'ConfirmInstall'],
+      'packs': [],
+      'online': 'Unavailable',
+      'next_action': '',
+      ...extra,
+    };
+    final pickerLabel = find.text('Choose game folder');
+
+    // One installation found and saved: no picker as the main action.
+    core.status.value = setup({'path': r'C:\Program Files\EA Games\The Sims 4'});
+    await tester.pumpWidget(PatcherApp(core: core));
+    await tester.pump();
+    expect(find.text(r'C:\Program Files\EA Games\The Sims 4'), findsOneWidget);
+    expect(pickerLabel, findsNothing);
+    expect(find.byKey(const Key('other-folder')), findsOneWidget);
+
+    // Several found: choose from the list; the picker is secondary.
+    core.status.value = setup({
+      'title': 'Choose your installation',
+      'candidates': [
+        {'path': r'C:\A', 'source': 'EA app'},
+        {'path': r'D:\B', 'source': 'Steam library'},
+      ],
+    });
+    await tester.pump();
+    expect(pickerLabel, findsNothing);
+    await tester.ensureVisible(find.text(r'D:\B'));
+    await tester.tap(find.text(r'D:\B'));
+    expect(core.commands.last, 'ConfirmInstall');
+    expect(core.arguments.last, {'path': r'D:\B'});
+
+    // Nothing found: the picker is the main action.
+    core.status.value = setup({'title': 'Choose your game folder'});
+    await tester.pump();
+    expect(pickerLabel, findsOneWidget);
+    expect(find.byKey(const Key('other-folder')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

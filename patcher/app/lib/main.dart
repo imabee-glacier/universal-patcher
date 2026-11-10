@@ -126,6 +126,10 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
         valueListenable: widget.core.status,
         builder: (context, s, _) {
           final actions = List<String>.from(s['actions'] ?? []);
+          // A game is in use, or found installations are listed to choose from.
+          final located =
+              s['path'] != null ||
+              (s['candidates'] as List? ?? []).isNotEmpty;
           final ready = s['ready'] == true;
           final fixture = s['fixture'] == true;
           final packs = List<Map<String, dynamic>>.from(s['packs'] ?? []);
@@ -310,7 +314,10 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                                     icon: const Icon(Icons.play_arrow_rounded),
                                     label: const Text('Play'),
                                   )
-                                else if (actions.contains('ConfirmInstall'))
+                                // The folder picker leads only when no installation was
+                                // found; otherwise the found game or the list is the choice.
+                                else if (actions.contains('ConfirmInstall') &&
+                                    !located)
                                   FilledButton.icon(
                                     key: const Key('primary-action'),
                                     onPressed: chooseFolder,
@@ -318,6 +325,17 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                                       Icons.folder_open_outlined,
                                     ),
                                     label: const Text('Choose game folder'),
+                                  ),
+                                if (actions.contains('ConfirmInstall') &&
+                                    located)
+                                  TextButton.icon(
+                                    key: const Key('other-folder'),
+                                    onPressed: chooseFolder,
+                                    icon: const Icon(
+                                      Icons.folder_open_outlined,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Use a different folder'),
                                   ),
                                 if (actions.contains('Verify'))
                                   OutlinedButton.icon(

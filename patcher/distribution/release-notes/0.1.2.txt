@@ -1,0 +1,5 @@
+The patcher finds your game by itself: when one copy of The Sims 4 is found it is used straight away and remembered, and the folder picker appears only when none is found. If more than one copy is found you choose which one to look after.
+
+Game locations on Windows are shown the way you would type them.
+
+The version shown by universal-patcher --version is now the release version.
