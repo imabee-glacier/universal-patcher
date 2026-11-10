@@ -35,10 +35,11 @@ fn engine_name(os: &str) -> &'static str {
 }
 
 /// Files a build must contain, relative to its bundle directory.
-fn required_files(os: &str) -> Result<[&'static str; 2]> {
+/// The second entry is always the engine the install scripts run.
+fn required_files(os: &str) -> Result<&'static [&'static str]> {
     match os {
-        "linux" => Ok(["patcher", "lib/patcher-engine"]),
-        "windows" => Ok(["patcher.exe", "patcher-engine.exe"]),
+        "linux" => Ok(&["patcher", "lib/patcher-engine"]),
+        "windows" => Ok(&["patcher.exe", "patcher-engine.exe", "patcher-launch.exe"]),
         _ => bail!("Packaging for {os} is not yet validated"),
     }
 }
@@ -114,7 +115,7 @@ pub fn package_app(
         crate::model::game_runs_on(os, arch),
         "The Sims 4 does not run on {os}-{arch}; nothing to package"
     );
-    for file in required_files(os)? {
+    for file in required_files(os)?.iter() {
         ensure!(
             bundle.join(file).is_file(),
             "Build is missing {file}: {}",

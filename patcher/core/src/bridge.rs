@@ -31,7 +31,17 @@ pub struct Pack {
     /// False until the user enabled, disabled or deferred this pack.
     pub answered: bool,
     pub deferred: bool,
+    /// Download size, when the list comes from a release.
     pub bytes: u64,
+    /// expansion, game, stuff, kit or free.
+    pub kind: String,
+    /// On the user's own installation: installed, incomplete, changed or not_installed.
+    /// Empty when the list comes from a release.
+    pub status: String,
+    /// Bytes on disk for an installed pack.
+    pub installed_bytes: u64,
+    /// Why the pack needs attention: files missing, changed or added since the last check.
+    pub issues: Vec<String>,
 }
 #[derive(Clone, Serialize)]
 pub struct Snapshot {
@@ -61,6 +71,12 @@ pub struct Snapshot {
     pub app_update: Option<String>,
     pub error: Option<String>,
     pub next_action: String,
+    /// Languages installed with the game, as codes such as ENG_US.
+    pub languages: Vec<String>,
+    /// Whether background maintenance can be turned on here.
+    pub background_supported: bool,
+    /// When the game's files were last checked, if ever.
+    pub checked_at: Option<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -90,6 +106,9 @@ impl Default for Snapshot {
             app_update: crate::app::staged_version(),
             error: None,
             next_action: "Your game will appear here automatically.".into(),
+            languages: vec![],
+            background_supported: cfg!(target_os = "linux"),
+            checked_at: None,
         }
     }
 }
@@ -144,6 +163,8 @@ struct Service {
     control: Mutex<Control>,
     pause: AtomicBool,
     cancel: AtomicBool,
+    /// The user's own installation, when there is no release feed to maintain it from.
+    local: Mutex<Option<LocalGame>>,
 }
 static SERVICE: OnceLock<Arc<Service>> = OnceLock::new();
 fn service() -> Arc<Service> {
@@ -179,6 +200,7 @@ fn service() -> Arc<Service> {
                 control: Mutex::new(Control::default()),
                 pause: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
+                local: Mutex::new(None),
             });
             let init = s.clone();
             std::thread::spawn(move || init.discover());
@@ -224,6 +246,10 @@ fn packs(release: &trust::VerifiedRelease, policy: &Policy) -> Vec<Pack> {
             selected: policy.desired.dlc.get(&g.id) == Some(&true),
             answered: policy.desired.dlc.contains_key(&g.id),
             deferred: policy.desired.deferred.contains(&g.id),
+            kind: crate::local::kind_of(&g.id).as_str().into(),
+            status: String::new(),
+            installed_bytes: 0,
+            issues: vec![],
             bytes: manifest
                 .files
                 .iter()
@@ -463,6 +489,11 @@ impl Service {
             }
             s.checked = d.checked.clone();
         });
+        if let Some(c) = &adopted
+            && self.config.is_none()
+        {
+            self.open_local(c);
+        }
     }
     fn start(self: &Arc<Self>, resume: bool, full_verify: bool) {
         if self.running.swap(true, Ordering::AcqRel) {
@@ -613,6 +644,9 @@ impl Service {
             .get("command")
             .and_then(Value::as_str)
             .context("Command is required")?;
+        if self.config.is_none() && self.local_command(command, &v)? {
+            return Ok(json!({"id":id,"accepted":true}));
+        }
         match command {
             "Discover" => {
                 ensure!(
@@ -778,6 +812,9 @@ impl Service {
                     s.detail = found_detail(&c);
                     s.candidates = vec![];
                 });
+                if self.config.is_none() {
+                    self.open_local(&c);
+                }
             }
             "Connect" | "Disconnect" => {
                 bail!("Online sign-in is unavailable: provider handoff has not been validated")
@@ -788,6 +825,439 @@ impl Service {
         Ok(json!({"id":id,"accepted":true}))
     }
 }
+/// The user's own installation, maintained in place without a release feed.
+struct LocalGame {
+    root: PathBuf,
+    source: String,
+    /// Where this installation's choices and file fingerprints are kept.
+    state: PathBuf,
+    /// The last check, kept until its changes are accepted.
+    report: Option<crate::local::CheckReport>,
+}
+
+fn local_state_dir() -> Result<PathBuf> {
+    Ok(crate::app::Layout::for_user()?.root.join("game"))
+}
+
+fn new_policy(c: &crate::discovery::Candidate) -> Policy {
+    Policy {
+        schema: 1,
+        game_id: "sims4".into(),
+        install: crate::storage::Installation {
+            identity: c.identity.clone(),
+            variant: c.variant.clone(),
+            roots: BTreeMap::from([("game".to_string(), c.path.clone())]),
+        },
+        revision: 1,
+        desired: crate::model::Selection::default(),
+        applied: None,
+        preferences: Preferences::default(),
+        suspended: None,
+    }
+}
+
+fn gib(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+}
+
+impl Service {
+    /// Adopts `c` as the installation to look after: its saved choices, or new ones (all
+    /// unanswered) for a first run or a different installation, then shows its packs.
+    fn open_local(self: &Arc<Self>, c: &crate::discovery::Candidate) {
+        let opened = (|| -> Result<Policy> {
+            let dir = local_state_dir()?;
+            fs::create_dir_all(&dir)?;
+            match Policy::load(&dir) {
+                Ok(p) if p.install.identity == c.identity => Ok(p),
+                _ => {
+                    // A first run, another installation, or both policy copies unreadable:
+                    // ask again rather than guess.
+                    let p = new_policy(c);
+                    p.save(&dir)?;
+                    Ok(p)
+                }
+            }
+        })();
+        let policy = match opened {
+            Ok(p) => p,
+            Err(e) => return self.failure(&format!("Cannot save your choices: {e:#}")),
+        };
+        let state = match local_state_dir() {
+            Ok(d) => d,
+            Err(e) => return self.failure(&format!("{e:#}")),
+        };
+        *self.local.lock().unwrap_or_else(|e| e.into_inner()) = Some(LocalGame {
+            root: c.path.clone(),
+            source: c.source.clone(),
+            state,
+            report: None,
+        });
+        self.show_local(&policy);
+    }
+
+    /// Reads the installation again and publishes it: packs with their status, languages,
+    /// choices, and the last check.
+    fn show_local(&self, policy: &Policy) {
+        let (root, state, report) = {
+            let guard = self.local.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(g) = guard.as_ref() else { return };
+            (g.root.clone(), g.state.clone(), g.report.clone())
+        };
+        let scanned = crate::local::scan(&root);
+        let languages = crate::local::languages(&root);
+        let baseline = crate::local::Baseline::load(&state.join("baseline.json"));
+        let packs: Vec<Pack> = scanned
+            .iter()
+            .map(|p| {
+                let installed = p.status != crate::local::Status::NotInstalled;
+                let check = report.as_ref().and_then(|r| r.packs.get(&p.id));
+                let mut issues: Vec<String> =
+                    p.missing.iter().map(|m| format!("Missing: {m}")).collect();
+                if let Some(c) = check {
+                    issues.extend(c.changed.iter().map(|f| format!("Changed: {f}")));
+                    issues.extend(
+                        c.missing
+                            .iter()
+                            .map(|f| format!("Gone since last check: {f}")),
+                    );
+                    issues.extend(c.added.iter().map(|f| format!("New since last check: {f}")));
+                }
+                let status = match p.status {
+                    crate::local::Status::NotInstalled => "not_installed",
+                    crate::local::Status::Incomplete => "incomplete",
+                    crate::local::Status::Installed if check.is_some_and(|c| !c.clean()) => {
+                        "changed"
+                    }
+                    crate::local::Status::Installed => "installed",
+                };
+                Pack {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    // Unanswered packs are proposed as installed.
+                    selected: policy.desired.dlc.get(&p.id).copied().unwrap_or(installed),
+                    answered: policy.desired.dlc.contains_key(&p.id),
+                    deferred: policy.desired.deferred.contains(&p.id),
+                    bytes: 0,
+                    kind: p.kind.as_str().into(),
+                    status: status.into(),
+                    installed_bytes: p.bytes,
+                    issues,
+                }
+            })
+            .collect();
+        let installed = packs.iter().filter(|p| p.status != "not_installed").count();
+        let attention = packs
+            .iter()
+            .filter(|p| matches!(p.status.as_str(), "incomplete" | "changed"))
+            .count();
+        let unanswered = packs
+            .iter()
+            .any(|p| p.status != "not_installed" && !p.answered && !p.deferred);
+        let on_disk: u64 = packs.iter().map(|p| p.installed_bytes).sum();
+        let base_changed = report
+            .as_ref()
+            .and_then(|r| r.packs.get("base"))
+            .is_some_and(|c| !c.clean());
+        self.update(|s| {
+            s.state = "installed".into();
+            s.phase = "installed".into();
+            s.ready = false;
+            s.path = Some(root.display().to_string());
+            s.candidates = vec![];
+            s.policy_revision = policy.revision;
+            s.preferences = policy.preferences.clone();
+            s.language = policy.desired.language.clone();
+            s.languages = languages;
+            s.background_supported = false;
+            s.checked_at = baseline.as_ref().map(|b| b.recorded_at.clone());
+            s.bytes_done = 0;
+            s.bytes_total = 0;
+            s.files_done = 0;
+            s.files_total = 0;
+            s.title = if unanswered {
+                "Review your packs".into()
+            } else if attention > 0 || base_changed {
+                "Some packs need attention".into()
+            } else {
+                "Your game".into()
+            };
+            s.detail = format!(
+                "{installed} of {} packs installed, {} on disk{}",
+                packs.len(),
+                gib(on_disk),
+                match attention {
+                    0 => String::new(),
+                    1 => " · 1 needs attention".into(),
+                    n => format!(" · {n} need attention"),
+                }
+            );
+            s.next_action = match (&report, &baseline) {
+                (Some(r), _) if r.packs.values().all(|c| c.clean()) => {
+                    "Every file matches the last check.".into()
+                }
+                (Some(_), _) => {
+                    "Review what changed, then accept it if you updated the game.".into()
+                }
+                (None, Some(b)) => format!("Files last checked {}.", b.recorded_at),
+                (None, None) => "Check your files once to record how they look today.".into(),
+            };
+            let mut actions: Vec<String> = [
+                "Verify",
+                "Launch",
+                "SetPolicy",
+                "Discover",
+                "ConfirmInstall",
+            ]
+            .map(String::from)
+            .to_vec();
+            if report
+                .as_ref()
+                .is_some_and(|r| !r.first && r.packs.values().any(|c| !c.clean()))
+            {
+                actions.push("AcceptCheck".into());
+            }
+            s.actions = actions;
+            s.packs = packs;
+            s.error = None;
+        });
+    }
+
+    /// Commands for the user's own installation. Returns false when `command` is not one of
+    /// them, so the caller handles it.
+    fn local_command(self: &Arc<Self>, command: &str, v: &Value) -> Result<bool> {
+        let have = self
+            .local
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if !have {
+            return Ok(false);
+        }
+        let state = local_state_dir()?;
+        match command {
+            "SetPolicy" => {
+                ensure!(
+                    !self.running.load(Ordering::Acquire),
+                    "Wait for the file check to finish"
+                );
+                let _lock = Lock::acquire(&state.join("session.lock"))?;
+                let mut p = Policy::load(&state)?;
+                ensure!(
+                    v.get("revision").and_then(Value::as_u64) == Some(p.revision),
+                    "Your choices changed; reopen the pack list"
+                );
+                let root = self
+                    .local
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .map(|g| g.root.clone())
+                    .context("No installation")?;
+                let known: Vec<String> = crate::local::scan(&root)
+                    .into_iter()
+                    .map(|p| p.id)
+                    .collect();
+                if let Some(dlc) = v.get("dlc") {
+                    let dlc: BTreeMap<String, bool> = serde_json::from_value(dlc.clone())?;
+                    for id in dlc.keys() {
+                        ensure!(known.contains(id), "Unknown pack: {id}");
+                    }
+                    p.desired.dlc = dlc;
+                }
+                if let Some(deferred) = v.get("deferred") {
+                    p.desired.deferred = serde_json::from_value(deferred.clone())?;
+                    for id in &p.desired.deferred {
+                        ensure!(known.contains(id), "Unknown pack: {id}");
+                    }
+                }
+                let deferred = p.desired.deferred.clone();
+                p.desired.dlc.retain(|id, _| !deferred.contains(id));
+                if let Some(language) = v.get("language") {
+                    let language: Option<String> = serde_json::from_value(language.clone())?;
+                    if let Some(code) = &language {
+                        ensure!(
+                            crate::local::languages(&root).contains(code),
+                            "{code} is not installed with this game"
+                        );
+                    }
+                    p.desired.language = language;
+                }
+                if let Some(preferences) = v.get("preferences") {
+                    let preferences: Preferences = serde_json::from_value(preferences.clone())?;
+                    ensure!(
+                        !preferences.background,
+                        "Background maintenance needs a published release, so it is not available yet"
+                    );
+                    p.preferences = preferences;
+                }
+                p.revision += 1;
+                p.save(&state)?;
+                self.show_local(&p);
+            }
+            "Verify" | "Start" | "Resume" => {
+                ensure!(
+                    !self.running.swap(true, Ordering::AcqRel),
+                    "A file check is already running"
+                );
+                self.cancel.store(false, Ordering::Release);
+                let s = self.clone();
+                std::thread::spawn(move || s.run_check());
+            }
+            "Pause" | "Cancel" => {
+                ensure!(
+                    self.running.load(Ordering::Acquire),
+                    "No file check is running"
+                );
+                self.cancel.store(true, Ordering::Release);
+            }
+            "AcceptCheck" => {
+                ensure!(
+                    !self.running.load(Ordering::Acquire),
+                    "Wait for the file check to finish"
+                );
+                let report = self
+                    .local
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_mut()
+                    .and_then(|g| g.report.take())
+                    .context("There is no check to accept")?;
+                crate::local::Baseline {
+                    schema: 1,
+                    recorded_at: jiff::Timestamp::now()
+                        .strftime("%Y-%m-%d %H:%M UTC")
+                        .to_string(),
+                    files: report.current,
+                }
+                .save(&state.join("baseline.json"))?;
+                self.show_local(&Policy::load(&state)?);
+            }
+            "Launch" => {
+                let (root, source) = self
+                    .local
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .map(|g| (g.root.clone(), g.source.clone()))
+                    .context("No installation")?;
+                crate::local::launch(&root, &source)?;
+                self.update(|s| s.next_action = "Starting The Sims 4.".into());
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// Checks every game file against the last accepted fingerprints, publishing progress.
+    fn run_check(self: &Arc<Self>) {
+        let target = self
+            .local
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|g| (g.root.clone(), g.state.clone()));
+        let Some((root, state)) = target else {
+            self.running.store(false, Ordering::Release);
+            return;
+        };
+        let baseline = crate::local::Baseline::load(&state.join("baseline.json"));
+        self.update(|s| {
+            s.state = "verifying".into();
+            s.phase = "verifying".into();
+            s.title = "Checking your game files".into();
+            s.detail = "Reading every file of the game and your packs.".into();
+            s.actions = vec!["Cancel".into()];
+        });
+        let started = Instant::now();
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let result = crate::local::check(&root, baseline.as_ref(), &self.cancel, |p| {
+            if last.elapsed() >= Duration::from_millis(100) {
+                last = Instant::now();
+                self.update(|s| {
+                    s.files_done = p.files_done;
+                    s.files_total = p.files_total;
+                    s.bytes_done = p.bytes_done;
+                    s.bytes_total = p.bytes_total;
+                    s.bytes_per_second =
+                        (p.bytes_done as f64 / started.elapsed().as_secs_f64().max(0.01)) as u64;
+                    s.detail = p.current;
+                });
+            }
+        });
+        let policy = Policy::load(&state);
+        match result {
+            Ok(report) => {
+                let lines: Vec<String> = if report.first {
+                    vec![format!(
+                        "Checked {} files ({}). They are the reference for future checks.",
+                        report.files,
+                        gib(report.bytes)
+                    )]
+                } else {
+                    let mut lines = vec![format!(
+                        "Checked {} files ({}).",
+                        report.files,
+                        gib(report.bytes)
+                    )];
+                    for (id, c) in report.packs.iter().filter(|(_, c)| !c.clean()) {
+                        lines.push(format!(
+                            "{}: {} changed, {} gone, {} new",
+                            if id == "base" { "Base game" } else { id },
+                            c.changed.len(),
+                            c.missing.len(),
+                            c.added.len()
+                        ));
+                    }
+                    lines
+                };
+                if report.first {
+                    let saved = crate::local::Baseline {
+                        schema: 1,
+                        recorded_at: jiff::Timestamp::now()
+                            .strftime("%Y-%m-%d %H:%M UTC")
+                            .to_string(),
+                        files: report.current.clone(),
+                    }
+                    .save(&state.join("baseline.json"));
+                    if let Err(e) = saved {
+                        self.running.store(false, Ordering::Release);
+                        return self.failure(&format!("Cannot record the check: {e:#}"));
+                    }
+                }
+                if let Some(g) = self
+                    .local
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_mut()
+                {
+                    g.report = (!report.first).then_some(report);
+                }
+                self.running.store(false, Ordering::Release);
+                match policy {
+                    Ok(p) => self.show_local(&p),
+                    Err(e) => self.failure(&format!("Cannot read your choices: {e:#}")),
+                }
+                self.update(|s| s.details = lines);
+            }
+            Err(e) => {
+                self.running.store(false, Ordering::Release);
+                let stopped = self.cancel.load(Ordering::Acquire);
+                match policy {
+                    Ok(p) => self.show_local(&p),
+                    Err(e) => self.failure(&format!("Cannot read your choices: {e:#}")),
+                }
+                self.update(|s| {
+                    s.details = vec![if stopped {
+                        "The check was stopped; nothing was changed.".into()
+                    } else {
+                        format!("The check could not finish: {e:#}")
+                    }];
+                });
+            }
+        }
+    }
+}
+
 fn string(value: Value) -> *mut c_char {
     CString::new(value.to_string()).unwrap().into_raw()
 }

@@ -123,5 +123,9 @@ install(FILES "${PATCHER_WORKSPACE}/target/${RUST_PROFILE_DIR}/patcher_core.dll"
 # Headless engine: installer, launcher, updater and scheduled maintenance.
 install(PROGRAMS "${PATCHER_WORKSPACE}/target/${RUST_PROFILE_DIR}/patcher.exe"
   DESTINATION "${CMAKE_INSTALL_PREFIX}" RENAME patcher-engine.exe COMPONENT Runtime)
+# The Start menu shortcut opens this launcher; it has no console window.
+install(PROGRAMS "${PATCHER_WORKSPACE}/target/${RUST_PROFILE_DIR}/patcher-launch.exe"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.svg"
+  "${CMAKE_CURRENT_SOURCE_DIR}/runner/resources/app_icon.ico"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)

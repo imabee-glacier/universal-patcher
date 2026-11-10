@@ -134,6 +134,10 @@ impl Layout {
         };
         self.root.join("bin").join(name)
     }
+    /// What the Start menu shortcut opens on Windows: the launcher without a console window.
+    pub fn app_launcher(&self) -> PathBuf {
+        self.root.join("bin").join("universal-patcher-app.exe")
+    }
     /// Game maintenance configuration written when an installation is confirmed.
     pub fn config(&self) -> PathBuf {
         self.root.join("config.json")
@@ -159,6 +163,21 @@ fn app_executable(version_dir: &Path) -> PathBuf {
         version_dir.join("patcher")
     }
 }
+/// Starts child processes without a console window on Windows.
+pub(crate) fn no_window(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
+/// The windowless launcher shipped in a Windows release.
+fn launch_executable(version_dir: &Path) -> PathBuf {
+    version_dir.join("patcher-launch.exe")
+}
+
 fn engine_executable(version_dir: &Path) -> PathBuf {
     if cfg!(windows) {
         version_dir.join("patcher-engine.exe")
@@ -427,17 +446,31 @@ fn install_launcher(layout: &Layout, v: &str) -> Result<()> {
     let launcher = layout.launcher();
     let bin = launcher.parent().context("Launcher has no directory")?;
     fs::create_dir_all(bin)?;
-    let fresh = bin.join(".launcher.new");
-    fs::copy(engine_executable(&layout.version(v)), &fresh)?;
-    crate::storage::sync_file(&fresh)?;
-    if cfg!(windows) && launcher.exists() {
-        // A running executable cannot be replaced on Windows, but it can be renamed.
-        let old = bin.join("universal-patcher.old.exe");
-        let _ = fs::remove_file(&old);
-        fs::rename(&launcher, &old)?;
+    replace_program(bin, &engine_executable(&layout.version(v)), &launcher)?;
+    let windowless = launch_executable(&layout.version(v));
+    if cfg!(windows) && windowless.is_file() {
+        replace_program(bin, &windowless, &layout.app_launcher())?;
     }
-    fs::rename(&fresh, &launcher)?;
     sync_dir(bin)
+}
+
+/// Puts a copy of `source` at `target` in `bin`, even while `target` is running.
+fn replace_program(bin: &Path, source: &Path, target: &Path) -> Result<()> {
+    let name = target
+        .file_name()
+        .context("Program has no name")?
+        .to_string_lossy();
+    let fresh = bin.join(format!(".{name}.new"));
+    fs::copy(source, &fresh)?;
+    crate::storage::sync_file(&fresh)?;
+    if cfg!(windows) && target.exists() {
+        // A running executable cannot be replaced on Windows, but it can be renamed.
+        let old = bin.join(format!("{name}.old"));
+        let _ = fs::remove_file(&old);
+        fs::rename(target, &old)?;
+    }
+    fs::rename(&fresh, target)?;
+    Ok(())
 }
 
 /// Rejects characters that desktop entries and shells would reinterpret.
@@ -477,7 +510,15 @@ fn linux_paths() -> Result<(PathBuf, PathBuf)> {
 
 fn powershell(script: &str, env: &[(&str, &Path)]) -> Result<()> {
     let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    no_window(&mut cmd);
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        script,
+    ]);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -490,9 +531,11 @@ const WINDOWS_INTEGRATE: &str = r#"
 $ErrorActionPreference = 'Stop'
 $shell = New-Object -ComObject WScript.Shell
 $link = $shell.CreateShortcut($env:UP_SHORTCUT)
-$link.TargetPath = $env:UP_LAUNCHER
-$link.Arguments = 'launch'
+$link.TargetPath = $env:UP_APP
+$link.Arguments = ''
 $link.WorkingDirectory = $env:UP_ROOT
+$link.Description = 'Look after The Sims 4'
+if (Test-Path -LiteralPath $env:UP_ICON) { $link.IconLocation = $env:UP_ICON }
 $link.Save()
 $path = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not (($path -split ';') -contains $env:UP_BIN)) {
@@ -505,6 +548,7 @@ Set-ItemProperty -Path $key -Name DisplayName -Value 'Universal Patcher'
 Set-ItemProperty -Path $key -Name DisplayVersion -Value $env:UP_VERSION
 Set-ItemProperty -Path $key -Name InstallLocation -Value $env:UP_ROOT
 Set-ItemProperty -Path $key -Name UninstallString -Value ('"' + $env:UP_LAUNCHER + '" uninstall')
+if (Test-Path -LiteralPath $env:UP_ICON) { Set-ItemProperty -Path $key -Name DisplayIcon -Value $env:UP_ICON }
 Set-ItemProperty -Path $key -Name NoModify -Value 1 -Type DWord
 Set-ItemProperty -Path $key -Name NoRepair -Value 1 -Type DWord
 "#;
@@ -574,11 +618,25 @@ fn integrate(layout: &Layout, v: &str) -> Result<Vec<String>> {
         "windows" => {
             let bin = launcher.parent().context("Launcher has no directory")?;
             let version = PathBuf::from(v);
+            // Releases without the windowless launcher fall back to the engine's `launch`.
+            let app = if layout.app_launcher().is_file() {
+                layout.app_launcher()
+            } else {
+                launcher.clone()
+            };
+            let icon = layout.root.join("share").join("app_icon.ico");
+            let icon_source = layout.version(v).join("data").join("app_icon.ico");
+            if icon_source.is_file() {
+                fs::create_dir_all(icon.parent().context("No share directory")?)?;
+                fs::copy(&icon_source, &icon)?;
+            }
             powershell(
                 WINDOWS_INTEGRATE,
                 &[
                     ("UP_SHORTCUT", &windows_shortcut()?),
                     ("UP_LAUNCHER", &launcher),
+                    ("UP_APP", &app),
+                    ("UP_ICON", &icon),
                     ("UP_ROOT", &layout.root),
                     ("UP_BIN", bin),
                     ("UP_VERSION", &version),

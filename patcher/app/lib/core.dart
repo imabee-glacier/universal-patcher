@@ -64,7 +64,13 @@ class NativeCore extends Core {
   void tick() {
     final data = _read(_snapshot());
     final numbers = <String, dynamic>{
-      for (final key in ['bytes_done', 'bytes_total', 'bytes_per_second'])
+      for (final key in [
+        'bytes_done',
+        'bytes_total',
+        'bytes_per_second',
+        'files_done',
+        'files_total',
+      ])
         key: data.remove(key),
     };
     data.remove('revision');
