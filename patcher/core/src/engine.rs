@@ -408,7 +408,11 @@ pub fn run(
         policy.suspended.is_none(),
         "Run is paused or cancelled; resume explicitly"
     );
+    // The state directory is configurable; it cannot establish exclusive ownership of the
+    // game. Take the shared installation lock before opening recovery state or inspecting files.
+    let _installation_lock = Lock::installation(&policy.install.identity)?;
     fs::create_dir_all(state)?;
+    // Retain the state lock as well, including coordination with older engine versions.
     let _lock = Lock::acquire(&state.join("install.lock"))?;
     let mut roots = BTreeMap::new();
     for (id, path) in &policy.install.roots {

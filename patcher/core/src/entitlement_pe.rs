@@ -85,7 +85,7 @@ pub fn byte_array_imports(image: &[u8]) -> Result<Vec<ImportSlot>, &'static str>
         if !name(image, dll)?.eq_ignore_ascii_case("Qt5Core.dll") {
             continue;
         }
-        if names == 0 || iat == 0 || iat % 8 != 0 {
+        if names == 0 || iat == 0 || !iat.is_multiple_of(8) {
             return Err("Unsupported Qt import table");
         }
         let mut thunk_terminated = false;

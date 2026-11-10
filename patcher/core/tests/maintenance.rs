@@ -15,6 +15,15 @@ use std::{
 fn rt() -> tokio::runtime::Runtime {
     tokio::runtime::Runtime::new().unwrap()
 }
+/// The patcher binary this suite spawns as a child process. `cargo test` on the
+/// build host bakes the path in through `CARGO_BIN_EXE_patcher`; `PATCHER_BIN`
+/// overrides it so the suite can also run where it was not built, such as a
+/// cross-compiled Windows executable observed on a Windows machine.
+fn patcher_bin() -> PathBuf {
+    std::env::var_os("PATCHER_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_patcher")))
+}
 fn setup(path: &Path) -> fixture::Config {
     rt().block_on(fixture::create(path)).unwrap()
 }
@@ -108,6 +117,83 @@ fn selected_content_repair_and_noop() {
     let before = fs::metadata(&target).unwrap().modified().unwrap();
     assert!(apply(&cfg, Default::default()).unwrap().replaced.is_empty());
     assert_eq!(before, fs::metadata(&target).unwrap().modified().unwrap());
+}
+
+#[test]
+fn separate_state_directories_cannot_write_the_same_installation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let t = tempfile::tempdir().unwrap();
+    let cfg = setup(&t.path().join("fixture"));
+    let mut other = cfg.clone();
+    other.state = t.path().join("other-state");
+    fs::create_dir_all(&other.state).unwrap();
+    Policy::load(&cfg.state)
+        .unwrap()
+        .save(&other.state)
+        .unwrap();
+    let other_config = t.path().join("other-config.json");
+    fs::write(&other_config, serde_json::to_vec(&other).unwrap()).unwrap();
+    // Fetch authorization before entering either engine; only the installation is shared.
+    let release = load(&cfg).unwrap();
+    let other_release = load(&other).unwrap();
+    let mut policy = Policy::load(&cfg.state).unwrap();
+    let checked = AtomicBool::new(false);
+    let source = LocalSource {
+        directory: cfg.local_objects.clone().unwrap(),
+    };
+    engine::run(
+        &release,
+        &mut policy,
+        &cfg.state,
+        &source,
+        &Control::default(),
+        &|_| {
+            if checked.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            let mut second_policy = Policy::load(&other.state).unwrap();
+            let result = engine::run(
+                &other_release,
+                &mut second_policy,
+                &other.state,
+                &source,
+                &Control::default(),
+                &|_| {},
+                &Default::default(),
+            );
+            assert!(result.is_err(), "second writer was allowed: {result:?}");
+            assert!(format!("{:#}", result.unwrap_err()).contains("Another patcher run"));
+            // The OS lock must exclude another process too, even when it has its own
+            // configuration, state, and PATCHER_HOME (as two installed versions can).
+            let child = std::process::Command::new(patcher_bin())
+                .env("PATCHER_HOME", t.path().join("other-patcher-home"))
+                .arg("run")
+                .arg("--config")
+                .arg(&other_config)
+                .output()
+                .unwrap();
+            assert!(!child.status.success(), "child writer was allowed");
+            assert!(
+                String::from_utf8_lossy(&child.stderr).contains("Another patcher run"),
+                "{}",
+                String::from_utf8_lossy(&child.stderr)
+            );
+            assert!(!other.state.join("journal.jsonl").exists());
+            assert!(Policy::load(&other.state).unwrap().applied.is_none());
+        },
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(checked.load(Ordering::SeqCst));
+    // An existing lock file is not a live owner: after release the second state can run.
+    assert!(
+        apply(&other, Default::default())
+            .unwrap()
+            .replaced
+            .is_empty()
+    );
+    assert_converged(&cfg);
 }
 
 #[test]

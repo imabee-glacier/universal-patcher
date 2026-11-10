@@ -577,6 +577,27 @@ fn production_root_keeps_the_root_key_out_of_publishing() {
 }
 
 #[test]
+fn windows_package_includes_the_entitlement_component() {
+    let t = tempfile::tempdir().unwrap();
+    let build = t.path().join("build");
+    fs::create_dir_all(&build).unwrap();
+    for name in ["patcher.exe", "patcher-engine.exe", "patcher-launch.exe"] {
+        fs::write(build.join(name), b"MZ").unwrap();
+    }
+    let err = distribution::package_app(&build, "1.0.0", "windows", "x64", &t.path().join("no"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("version.dll"), "{err}");
+    fs::write(build.join("version.dll"), b"MZ-component").unwrap();
+    let manifest =
+        distribution::package_app(&build, "1.0.0", "windows", "x64", &t.path().join("yes"))
+            .unwrap();
+    assert_eq!(manifest.os, "windows");
+    let packed = fs::read_dir(t.path().join("yes/objects")).unwrap().count();
+    assert!(packed >= 1, "the package object was not written");
+}
+
+#[test]
 fn only_platforms_the_game_runs_on_are_packaged_or_accepted() {
     use patcher_core::model::{AppManifest, game_runs_on};
     for (os, arch) in [

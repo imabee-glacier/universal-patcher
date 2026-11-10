@@ -1,9 +1,13 @@
 //! Synthetic protocol fixtures, not proof of native game handoff.
 use patcher_core::{
-    entitlement::{Catalog, Entitlement, Filters, Session},
+    entitlement::{
+        Catalog, Entitlement, Filters, Replacement, Session, place_component, record_hook,
+        record_verified_rewrite, shipped_catalog, unlock_report,
+    },
     model::Selection,
+    storage::{Installation, Policy},
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs};
 
 #[test]
 fn pe_import_discovery_is_bounded_and_does_not_hook_qstring() {
@@ -303,4 +307,178 @@ fn conflicting_pack_ownership_and_large_catalogs_are_rejected() {
         })
         .collect();
     assert!(Session::bind(c, &Selection::default(), 1).is_err());
+}
+
+fn saved_policy(dir: &std::path::Path, enabled: &[(&str, bool)]) {
+    Policy {
+        schema: 1,
+        game_id: "sims4".into(),
+        install: Installation {
+            identity: "fixture-install".into(),
+            variant: "windows-native".into(),
+            roots: BTreeMap::from([("game".into(), dir.join("game"))]),
+        },
+        revision: 3,
+        desired: Selection {
+            dlc: enabled.iter().map(|(id, on)| ((*id).into(), *on)).collect(),
+            ..Default::default()
+        },
+        applied: None,
+        preferences: Default::default(),
+        suspended: None,
+    }
+    .save(dir)
+    .unwrap();
+}
+
+fn two_pack_catalog() -> Catalog {
+    Catalog {
+        schema: 1,
+        game_id: "sims4".into(),
+        entries: vec![
+            Entitlement {
+                pack_id: "EP01".into(),
+                offer_id: "selected-offer".into(),
+                group: "THESIMS4PC".into(),
+                tag: "selected-tag".into(),
+                kind: "DEFAULT".into(),
+                version: "0".into(),
+                id: 1,
+            },
+            Entitlement {
+                pack_id: "EP02".into(),
+                offer_id: "deselected-offer".into(),
+                group: "THESIMS4PC".into(),
+                tag: "deselected-tag".into(),
+                kind: "DEFAULT".into(),
+                version: "0".into(),
+                id: 2,
+            },
+        ],
+    }
+}
+
+#[test]
+fn replacement_uses_saved_policy_and_leaves_a_changed_selection_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_policy(dir.path(), &[("EP01", true), ("EP02", false)]);
+    fs::write(
+        dir.path().join("entitlements.json"),
+        serde_json::to_vec(&two_pack_catalog()).unwrap(),
+    )
+    .unwrap();
+    let mut replacement = Replacement::open(dir.path()).unwrap();
+    let request = "<LSX><Request id='7'><QueryEntitlements Group='THESIMS4PC'/></Request></LSX>";
+    let response = "<LSX><Response id='7'><QueryEntitlementsResponse/></Response></LSX>";
+    assert!(replacement.observe(request).unwrap().is_none());
+    let rewritten = replacement.observe(response).unwrap().unwrap();
+    assert!(rewritten.contains("ItemId=\"selected-offer\""));
+    assert!(rewritten.contains("EntitlementTag=\"selected-tag\""));
+    assert!(!rewritten.contains("deselected-offer"));
+    assert!(!rewritten.contains("deselected-tag"));
+    let sims = "<LSX><Response id='9'><QueryEntitlementsResponse><Entitlement Group=\"THESIMS4PC\"/></QueryEntitlementsResponse></Response></LSX>";
+    let rows: [&[&str]; 3] = [
+        &[
+            "<LSX><Request id='9'><QueryEntitlements Group='THESIMS4PC'/></Request></LSX>",
+            sims,
+            sims,
+        ],
+        &[sims, sims],
+        &[
+            "<LSX><Request id='7'><QueryEntitlements Group='THESIMS4PC'/></Request></LSX>",
+            "<LSX><Response id='7'><QueryEntitlementsResponse/></Response></LSX>",
+            "<LSX><Response id='7'><QueryEntitlementsResponse/></Response></LSX>",
+        ],
+    ];
+    for messages in rows {
+        let mut session = Replacement::open(dir.path()).unwrap();
+        let results: Vec<Option<String>> = messages
+            .iter()
+            .map(|xml| session.observe(xml).unwrap())
+            .collect();
+        let rewrites: Vec<&str> = results.iter().filter_map(|item| item.as_deref()).collect();
+        assert_eq!(
+            rewrites.len(),
+            1,
+            "a second identical response was rewritten"
+        );
+        assert!(results.last().unwrap().is_none());
+        assert!(rewrites[0].contains("ItemId=\"selected-offer\""));
+        assert!(!rewrites[0].contains("deselected-offer"));
+    }
+    assert!(
+        replacement
+            .observe("<LSX><Response id='1'><GetProfileResponse/></Response></LSX>")
+            .unwrap()
+            .is_none()
+    );
+    let path = dir.path().join("policy.json");
+    let saved = fs::read(&path).unwrap();
+    let mut changed = saved.clone();
+    changed[0] ^= 0xff;
+    fs::write(&path, &changed).unwrap();
+    assert!(
+        replacement.observe(response).is_err(),
+        "a changed selection invalidates the session"
+    );
+    assert_eq!(unlock_report(true, Some(dir.path())).0, "disabled");
+    fs::write(&path, &saved).unwrap();
+    let host = r"C:\Program Files\Electronic Arts\EA Desktop\EA Desktop\EADesktop.exe";
+    assert!(record_verified_rewrite(dir.path(), &rewritten, r"C:\not-ea\helper.exe").is_err());
+    record_verified_rewrite(dir.path(), &rewritten, host).unwrap();
+    assert_eq!(unlock_report(true, Some(dir.path())).0, "disabled");
+    record_hook(dir.path(), r"C:\Windows\System32\notepad.exe", "installed").unwrap();
+    assert_eq!(unlock_report(true, Some(dir.path())).0, "failed");
+    record_hook(dir.path(), host, "no-byte-array-imports").unwrap();
+    assert_eq!(unlock_report(true, Some(dir.path())).0, "failed");
+    record_hook(dir.path(), host, "installed").unwrap();
+    let (state, detail) = unlock_report(true, Some(dir.path()));
+    assert_eq!(state, "enabled");
+    assert!(detail.contains("does not show EA account ownership"));
+    assert_eq!(unlock_report(false, Some(dir.path())).0, "unsupported");
+}
+
+#[test]
+fn component_is_copied_into_the_destination_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundled = dir.path().join("version.dll");
+    let dest = dir.path().join("EA Desktop");
+    fs::create_dir(&dest).unwrap();
+    let mut bytes = b"MZ".to_vec();
+    bytes.extend(std::iter::repeat(0).take(62));
+    fs::write(&bundled, bytes).unwrap();
+    place_component(&bundled, &dest).unwrap();
+    assert_eq!(fs::read(dest.join("version.dll")).unwrap(), fs::read(&bundled).unwrap());
+    place_component(&bundled, &dest).unwrap();
+}
+
+#[test]
+fn unmapped_selected_pack_fails_closed_and_is_not_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_policy(dir.path(), &[("EP99", true), ("EP01", false)]);
+    fs::write(
+        dir.path().join("entitlements.json"),
+        serde_json::to_vec(&two_pack_catalog()).unwrap(),
+    )
+    .unwrap();
+    match Replacement::open(dir.path()) {
+        Err("Selected pack has no entitlement mapping") => {}
+        Err(other) => panic!("unexpected error: {other}"),
+        Ok(_) => panic!("unmapped pack was accepted"),
+    }
+    assert_eq!(unlock_report(true, Some(dir.path())).0, "failed");
+    let shipped = shipped_catalog().unwrap();
+    assert!(shipped.entries.iter().any(|entry| entry.pack_id == "EP01"));
+    assert!(
+        shipped
+            .entries
+            .iter()
+            .all(|entry| entry.tag != "ONLINE_ACCESS")
+    );
+    assert!(
+        shipped
+            .entries
+            .iter()
+            .all(|entry| entry.group == "THESIMS4PC")
+    );
 }

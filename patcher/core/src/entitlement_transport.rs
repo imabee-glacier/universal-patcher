@@ -34,6 +34,11 @@ impl Transport {
         self.pending.clear();
     }
 
+    /// The response the bound selection would write for this query.
+    pub fn response_for(&self, binding: &Binding, xml: &str) -> Result<String, &'static str> {
+        self.session.query(binding, xml)
+    }
+
     /// None means preserve the original bytes. Errors never include message data.
     pub fn observe(
         &mut self,

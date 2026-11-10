@@ -4,7 +4,17 @@ use patcher_core::{
     os::{self, Network},
     storage::Policy,
 };
-use std::{path::Path, process::Command};
+use std::{path::Path, path::PathBuf, process::Command};
+
+/// The patcher binary this suite spawns as a child process. `cargo test` on the
+/// build host bakes the path in through `CARGO_BIN_EXE_patcher`; `PATCHER_BIN`
+/// overrides it so the suite can also run where it was not built, such as a
+/// cross-compiled Windows executable observed on a Windows machine.
+fn patcher_bin() -> PathBuf {
+    std::env::var_os("PATCHER_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_patcher")))
+}
 
 #[test]
 fn network_manager_values_map_to_network_cost() {
@@ -80,7 +90,7 @@ fn scheduled_run_does_nothing_unless_background_maintenance_is_enabled() {
     let cfg = fixture(&t.path().join("fixture"));
     let config = t.path().join("fixture/config.json");
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_patcher"))
+        Command::new(patcher_bin())
             .args(["run", "--scheduled", "--config"])
             .arg(&config)
             .output()

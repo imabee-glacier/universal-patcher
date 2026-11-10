@@ -82,7 +82,7 @@ fn symbol(name: &[u8]) -> Option<unsafe extern "system" fn() -> isize> {
 }
 
 macro_rules! forward {
-    ($name:ident($($arg:ident : $ty:ty),*) -> $ret:ty) => {
+    ($name:ident($($arg:ident : $ty:ty),* $(,)?) -> $ret:ty) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "system" fn $name($($arg:$ty),*) -> $ret {
             let Some(address) = symbol(concat!(stringify!($name), "\0").as_bytes()) else {
@@ -94,22 +94,96 @@ macro_rules! forward {
         }
     };
 }
-forward!(GetFileVersionInfoA(path:*const u8, handle:u32, len:u32, data:*mut c_void)->i32);
-forward!(GetFileVersionInfoW(path:*const u16, handle:u32, len:u32, data:*mut c_void)->i32);
-forward!(GetFileVersionInfoExA(flags:u32,path:*const u8,handle:u32,len:u32,data:*mut c_void)->i32);
-forward!(GetFileVersionInfoExW(flags:u32,path:*const u16,handle:u32,len:u32,data:*mut c_void)->i32);
-forward!(GetFileVersionInfoSizeA(path:*const u8,handle:*mut u32)->u32);
-forward!(GetFileVersionInfoSizeW(path:*const u16,handle:*mut u32)->u32);
-forward!(GetFileVersionInfoSizeExA(flags:u32,path:*const u8,handle:*mut u32)->u32);
-forward!(GetFileVersionInfoSizeExW(flags:u32,path:*const u16,handle:*mut u32)->u32);
-forward!(VerQueryValueA(block:*const c_void,key:*const u8,result:*mut *mut c_void,len:*mut u32)->i32);
-forward!(VerQueryValueW(block:*const c_void,key:*const u16,result:*mut *mut c_void,len:*mut u32)->i32);
-forward!(VerLanguageNameA(lang:u32,buffer:*mut u8,len:u32)->u32);
-forward!(VerLanguageNameW(lang:u32,buffer:*mut u16,len:u32)->u32);
-forward!(VerFindFileA(flags:u32,file:*const u8,windows:*const u8,app:*const u8,current:*mut u8,current_len:*mut u32,dest:*mut u8,dest_len:*mut u32)->u32);
-forward!(VerFindFileW(flags:u32,file:*const u16,windows:*const u16,app:*const u16,current:*mut u16,current_len:*mut u32,dest:*mut u16,dest_len:*mut u32)->u32);
-forward!(VerInstallFileA(flags:u32,src:*const u8,dst:*const u8,src_dir:*const u8,dst_dir:*const u8,current:*const u8,temp:*mut u8,len:*mut u32)->u32);
-forward!(VerInstallFileW(flags:u32,src:*const u16,dst:*const u16,src_dir:*const u16,dst_dir:*const u16,current:*const u16,temp:*mut u16,len:*mut u32)->u32);
+forward!(GetFileVersionInfoA(path: *const u8, handle: u32, len: u32, data: *mut c_void) -> i32);
+forward!(GetFileVersionInfoW(path: *const u16, handle: u32, len: u32, data: *mut c_void) -> i32);
+forward!(
+    GetFileVersionInfoExA(
+        flags: u32,
+        path: *const u8,
+        handle: u32,
+        len: u32,
+        data: *mut c_void,
+    ) -> i32
+);
+forward!(
+    GetFileVersionInfoExW(
+        flags: u32,
+        path: *const u16,
+        handle: u32,
+        len: u32,
+        data: *mut c_void,
+    ) -> i32
+);
+forward!(GetFileVersionInfoSizeA(path: *const u8, handle: *mut u32) -> u32);
+forward!(GetFileVersionInfoSizeW(path: *const u16, handle: *mut u32) -> u32);
+forward!(GetFileVersionInfoSizeExA(flags: u32, path: *const u8, handle: *mut u32) -> u32);
+forward!(GetFileVersionInfoSizeExW(flags: u32, path: *const u16, handle: *mut u32) -> u32);
+forward!(
+    VerQueryValueA(
+        block: *const c_void,
+        key: *const u8,
+        result: *mut *mut c_void,
+        len: *mut u32,
+    ) -> i32
+);
+forward!(
+    VerQueryValueW(
+        block: *const c_void,
+        key: *const u16,
+        result: *mut *mut c_void,
+        len: *mut u32,
+    ) -> i32
+);
+forward!(VerLanguageNameA(lang: u32, buffer: *mut u8, len: u32) -> u32);
+forward!(VerLanguageNameW(lang: u32, buffer: *mut u16, len: u32) -> u32);
+forward!(
+    VerFindFileA(
+        flags: u32,
+        file: *const u8,
+        windows: *const u8,
+        app: *const u8,
+        current: *mut u8,
+        current_len: *mut u32,
+        dest: *mut u8,
+        dest_len: *mut u32,
+    ) -> u32
+);
+forward!(
+    VerFindFileW(
+        flags: u32,
+        file: *const u16,
+        windows: *const u16,
+        app: *const u16,
+        current: *mut u16,
+        current_len: *mut u32,
+        dest: *mut u16,
+        dest_len: *mut u32,
+    ) -> u32
+);
+forward!(
+    VerInstallFileA(
+        flags: u32,
+        src: *const u8,
+        dst: *const u8,
+        src_dir: *const u8,
+        dst_dir: *const u8,
+        current: *const u8,
+        temp: *mut u8,
+        len: *mut u32,
+    ) -> u32
+);
+forward!(
+    VerInstallFileW(
+        flags: u32,
+        src: *const u16,
+        dst: *const u16,
+        src_dir: *const u16,
+        dst_dir: *const u16,
+        current: *const u16,
+        temp: *mut u16,
+        len: *mut u32,
+    ) -> u32
+);
 
 fn read(address: usize, bytes: &mut [u8]) -> bool {
     let mut count = 0;
@@ -151,7 +225,24 @@ unsafe extern "system" fn observe(this: *const c_void) -> *const u8 {
             let replacement = std::panic::catch_unwind(|| {
                 let xml = std::str::from_utf8(&bytes).ok()?;
                 let mut runtime = RUNTIME.get()?.try_lock().ok()?;
-                runtime.observe(xml).ok().flatten()
+                match runtime.observe(xml) {
+                    Ok(Some(text)) => {
+                        note_lsx(xml, "rewrite");
+                        Some(text)
+                    }
+                    Ok(None) => {
+                        note_lsx(xml, "unchanged");
+                        None
+                    }
+                    Err(error) => {
+                        note_lsx(xml, error);
+                        if error == "selection-changed" && xml.contains("QueryEntitlementsResponse")
+                        {
+                            remember_unchanged(xml);
+                        }
+                        None
+                    }
+                }
             })
             .ok()
             .flatten();
@@ -180,8 +271,21 @@ unsafe extern "system" fn observe(this: *const c_void) -> *const u8 {
                             replacement.len() as i32,
                         );
                     }
-                    REWRITES.fetch_add(1, Ordering::Relaxed);
-                    return unsafe { original(this) };
+                    // Read the pointer Qt returns after it copies into its own storage.
+                    let reread = unsafe { original(this) };
+                    if let Some(stored) = array_bytes(this as usize, reread as usize)
+                        && stored == replacement.as_bytes()
+                    {
+                        REWRITES.fetch_add(1, Ordering::Relaxed);
+                        if let Some(runtime) = RUNTIME.get()
+                            && let Ok(runtime) = runtime.try_lock()
+                            && let Ok(text) = std::str::from_utf8(&stored)
+                            && runtime.note_rewrite(text).is_ok()
+                        {
+                            remember_rewrite(text);
+                        }
+                    }
+                    return reread;
                 }
             }
         } else {
@@ -192,7 +296,37 @@ unsafe extern "system" fn observe(this: *const c_void) -> *const u8 {
 }
 
 fn install_probe() -> Result<usize, &'static str> {
-    let module = unsafe { GetModuleHandleW(ptr::null()) };
+    let mut modules = vec![std::ptr::null_mut(); 1024];
+    let mut needed = 0u32;
+    if unsafe {
+        K32EnumProcessModules(
+            GetCurrentProcess(),
+            modules.as_mut_ptr(),
+            (modules.len() * std::mem::size_of::<HMODULE>()) as u32,
+            &mut needed,
+        )
+    } == 0
+    {
+        return Err("module-list");
+    }
+    let count = (needed as usize / std::mem::size_of::<HMODULE>()).min(modules.len());
+    let mut installed = 0usize;
+    for module in &modules[..count] {
+        if module.is_null() {
+            continue;
+        }
+        match install_module(*module) {
+            Ok(n) => installed += n,
+            Err("no-byte-array-imports") => {}
+            Err(error) => return Err(error),
+        }
+    }
+    // A DLL that imports QByteArray may load after this probe. The caller keeps
+    // trying. An empty result is not a failure.
+    Ok(installed)
+}
+
+fn install_module(module: HMODULE) -> Result<usize, &'static str> {
     let mut info: MODULEINFO = unsafe { std::mem::zeroed() };
     if unsafe {
         K32GetModuleInformation(
@@ -203,37 +337,56 @@ fn install_probe() -> Result<usize, &'static str> {
         )
     } == 0
     {
-        return Err("module-info");
+        return Ok(0);
     }
     if info.SizeOfImage > 256 * 1024 * 1024 {
         return Err("image-limit");
     }
     let mut image = vec![0u8; info.SizeOfImage as usize];
     if !read(module as usize, &mut image) {
-        return Err("image-read");
+        return Ok(0);
     }
-    let slots = crate::pe::byte_array_imports(&image)?;
+    let slots = match crate::pe::byte_array_imports(&image) {
+        Ok(slots) => slots,
+        Err(_) => return Ok(0),
+    };
     if slots.is_empty() {
-        return Err("no-byte-array-imports");
+        return Ok(0);
     }
+    let observe_address = observe as *const () as usize;
     let addresses: Vec<_> = slots
         .iter()
-        .map(|s| usize::from_le_bytes(image[s.offset..s.offset + 8].try_into().unwrap()))
+        .map(|slot| usize::from_le_bytes(image[slot.offset..slot.offset + 8].try_into().unwrap()))
         .collect();
-    if addresses.iter().any(|a| *a == 0 || *a != addresses[0]) {
+    let original = addresses[0];
+    if original == 0 || addresses.iter().any(|address| *address != original && *address != observe_address)
+    {
         return Err("import-address-mismatch");
     }
-    ORIGINAL.store(addresses[0], Ordering::Release);
+    if original != observe_address {
+        match ORIGINAL.compare_exchange(0, original, Ordering::Release, Ordering::Acquire) {
+            Ok(_) => {}
+            Err(existing) if existing == original || existing == observe_address => {}
+            Err(_) => return Err("import-address-mismatch"),
+        }
+    }
     let mut installed = 0;
     for slot in slots {
         let address = (module as usize + slot.offset) as *mut AtomicUsize;
+        let current = unsafe { &*address }.load(Ordering::SeqCst);
+        if current == observe_address {
+            continue;
+        }
+        if current != original {
+            return Err("import-changed");
+        }
         let mut protection = 0;
         if unsafe { VirtualProtect(address.cast(), 8, PAGE_READWRITE, &mut protection) } == 0 {
             return Err("import-protection");
         }
         let result = unsafe { &*address }.compare_exchange(
-            addresses[0],
-            observe as *const () as usize,
+            original,
+            observe_address,
             Ordering::SeqCst,
             Ordering::SeqCst,
         );
@@ -249,6 +402,27 @@ fn install_probe() -> Result<usize, &'static str> {
     Ok(installed)
 }
 
+fn saved_policy_dir() -> Option<std::path::PathBuf> {
+    let root = std::env::var_os("LOCALAPPDATA")?;
+    let dir = std::path::PathBuf::from(root)
+        .join("UniversalPatcher")
+        .join("game");
+    dir.join("policy.json").is_file().then_some(dir)
+}
+
+fn bind_qt_replace(module: HMODULE) -> bool {
+    let Some(replace) = (unsafe {
+        GetProcAddress(
+            module,
+            c"?replace@QByteArray@@QEAAAEAV1@HHPEBDH@Z".as_ptr().cast(),
+        )
+    }) else {
+        return false;
+    };
+    REPLACE.store(replace as usize, Ordering::Release);
+    true
+}
+
 unsafe extern "system" fn worker(_: *mut c_void) -> u32 {
     let mut name = [0u16; 32768];
     let len = unsafe { GetModuleFileNameW(ptr::null_mut(), name.as_mut_ptr(), name.len() as u32) };
@@ -256,54 +430,193 @@ unsafe extern "system" fn worker(_: *mut c_void) -> u32 {
     if !host.to_ascii_lowercase().ends_with("\\eadesktop.exe") {
         return 0;
     }
-    // Explicit probe opt-in; a DLL load alone does not authorize interception.
-    if std::env::var("UNIVERSAL_PATCHER_PROBE").as_deref() != Ok("1") {
+    let Some(dir) = saved_policy_dir() else {
+        return 0;
+    };
+    let _ = patcher_core::entitlement::arm_saved_installation(&dir);
+    let Ok(runtime) = crate::runtime::Runtime::load(dir.clone()) else {
+        patcher_core::entitlement::clear_rewrite_proof(&dir);
+        let _ = patcher_core::entitlement::record_hook(&dir, &host, "policy-unavailable");
+        return 0;
+    };
+    if !runtime.any_enabled() {
         return 0;
     }
-    if let Some(path) = std::env::var_os("UNIVERSAL_PATCHER_TEST_CONFIG") {
-        if let Ok(runtime) = crate::runtime::Runtime::load(path.into()) {
-            let qt: Vec<u16> = "Qt5Core.dll\0".encode_utf16().collect();
-            let module = unsafe { GetModuleHandleW(qt.as_ptr()) };
-            if let Some(replace) = unsafe {
-                GetProcAddress(
-                    module,
-                    c"?replace@QByteArray@@QEAAAEAV1@HHPEBDH@Z".as_ptr().cast(),
-                )
-            } {
-                REPLACE.store(replace as usize, Ordering::Release);
-                let _ = RUNTIME.set(Mutex::new(runtime));
-            }
+    let qt: Vec<u16> = "Qt5Core.dll\0".encode_utf16().collect();
+    // EA Desktop loads this component before Qt. Wait until Qt5Core is mapped.
+    let mut module = unsafe { GetModuleHandleW(qt.as_ptr()) };
+    for _ in 0..120 {
+        if !module.is_null() && bind_qt_replace(module) {
+            break;
         }
+        unsafe { Sleep(500) };
+        module = unsafe { GetModuleHandleW(qt.as_ptr()) };
     }
-    let result = install_probe();
-    if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
-        let path = std::path::PathBuf::from(dir).join("UniversalPatcherEntitlementTests");
-        if std::fs::create_dir_all(&path).is_ok() {
-            // Observe for the lifetime of the diagnostic session rather than
-            // silently freezing counters before a slow game launch completes.
-            // The bounded six-hour window prevents indefinite diagnostic IO.
-            let mut previous = String::new();
-            for _ in 0..4320 {
-                let summary = format!(
-                    "probe={result:?}\ncalls={}\nlsx={}\ninvalid_arrays={}\nrewrites={}\n",
-                    CALLS.load(Ordering::Relaxed),
-                    LSX.load(Ordering::Relaxed),
-                    INVALID_ARRAYS.load(Ordering::Relaxed),
-                    REWRITES.load(Ordering::Relaxed)
-                );
-                if summary != previous {
-                    if std::fs::write(path.join("native-probe.txt"), &summary).is_err() {
-                        break;
-                    }
-                    previous = summary;
-                }
-                unsafe {
-                    Sleep(5000);
+    if REPLACE.load(Ordering::Acquire) == 0 || RUNTIME.set(Mutex::new(runtime)).is_err() {
+        patcher_core::entitlement::clear_rewrite_proof(&dir);
+        let _ = patcher_core::entitlement::record_hook(&dir, &host_name(), "qt-unavailable");
+        return 0;
+    }
+    // Entitlement code may live in a DLL loaded after EA Desktop starts. Keep
+    // installing newly loaded import tables, and record whether any call arrives.
+    let mut reported = false;
+    for _ in 0..180 {
+        match install_probe() {
+            Ok(0) if !reported && ORIGINAL.load(Ordering::Acquire) == 0 => {}
+            Ok(_) => {
+                if !reported {
+                    let _ = patcher_core::entitlement::record_hook(&dir, &host_name(), "installed");
+                    reported = true;
                 }
             }
+            Err(error) => {
+                patcher_core::entitlement::clear_rewrite_proof(&dir);
+                let _ = patcher_core::entitlement::record_hook(&dir, &host_name(), error);
+                return 0;
+            }
         }
+        let _ = std::fs::write(
+            dir.join("hook-activity.txt"),
+            format!(
+                "calls={}\nlsx={}\nrewrites={}\n",
+                CALLS.load(Ordering::Relaxed),
+                LSX.load(Ordering::Relaxed),
+                REWRITES.load(Ordering::Relaxed)
+            ),
+        );
+        unsafe { Sleep(1000) };
+    }
+    if !reported {
+        patcher_core::entitlement::clear_rewrite_proof(&dir);
+        let _ = patcher_core::entitlement::record_hook(&dir, &host_name(), "no-byte-array-imports");
     }
     0
+}
+
+fn note_lsx(xml: &str, outcome: &str) {
+    let Some(dir) = saved_policy_dir() else {
+        return;
+    };
+    let path = dir.join("hook-lsx.txt");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    if existing.lines().count() >= 80 {
+        return;
+    }
+    let tags: Vec<&str> = xml
+        .split('<')
+        .skip(1)
+        .filter_map(|part| part.split([' ', '>', '/']).next())
+        .filter(|name| !name.is_empty() && !name.starts_with(['!', '?', '/']))
+        .take(4)
+        .collect();
+    let marker = if xml.contains("QueryEntitlements") {
+        " query"
+    } else if xml.contains("THESIMS4PC") {
+        " sims"
+    } else {
+        ""
+    };
+    let _ = std::fs::write(
+        path,
+        format!("{existing}{outcome} {}{marker}\n", tags.join("/")),
+    );
+}
+
+fn host_name() -> String {
+    let mut name = [0u16; 32768];
+    let len = unsafe { GetModuleFileNameW(ptr::null_mut(), name.as_mut_ptr(), name.len() as u32) };
+    String::from_utf16_lossy(&name[..len as usize])
+}
+
+fn remember_rewrite(read_back: &str) {
+    let Some(dir) = saved_policy_dir() else {
+        return;
+    };
+    let _ = std::fs::write(dir.join("hook-readback.xml"), read_back.as_bytes());
+    publish_hook_evidence(&dir, read_back, false, "");
+}
+
+fn remember_unchanged(original: &str) {
+    let Some(dir) = saved_policy_dir() else {
+        return;
+    };
+    let _ = std::fs::write(dir.join("hook-unchanged.xml"), original.as_bytes());
+    let previous = std::fs::read_to_string(dir.join("hook-readback.xml")).unwrap_or_default();
+    publish_hook_evidence(&dir, &previous, true, original);
+}
+
+fn message_id(xml: &str) -> String {
+    xml.split("id=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .or_else(|| {
+            xml.split("id='")
+                .nth(1)
+                .and_then(|rest| rest.split('\'').next())
+        })
+        .unwrap_or("")
+        .to_string()
+}
+
+fn publish_hook_evidence(
+    dir: &std::path::Path,
+    read_back: &str,
+    invalidation_unchanged: bool,
+    unchanged_xml: &str,
+) {
+    let Ok(policy) = patcher_core::storage::Policy::load(dir) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(dir.join("entitlements.json")) else {
+        return;
+    };
+    let Ok(catalog) = patcher_core::entitlement::Catalog::parse(&bytes) else {
+        return;
+    };
+    let selected = catalog
+        .entries
+        .iter()
+        .find(|entry| policy.desired.dlc.get(&entry.pack_id) == Some(&true));
+    let deselected = catalog
+        .entries
+        .iter()
+        .find(|entry| policy.desired.dlc.get(&entry.pack_id) == Some(&false));
+    let Some(selected) = selected else {
+        return;
+    };
+    let Some(deselected) = deselected else {
+        return;
+    };
+    let observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let response_id = message_id(read_back);
+    let unchanged_response_id = message_id(unchanged_xml);
+    let evidence = serde_json::json!({
+        "schema": 1,
+        "observed_at": observed_at,
+        "response_id": response_id,
+        "unchanged_response_id": unchanged_response_id,
+        "unchanged_is_entitlement": unchanged_xml.contains("QueryEntitlementsResponse"),
+        "os": std::env::var("OS").unwrap_or_else(|_| std::env::consts::OS.into()),
+        "user": std::env::var("USERNAME").unwrap_or_default(),
+        "host": host_name(),
+        "hook": "installed",
+        "selected_offer": selected.offer_id,
+        "selected_tag": selected.tag,
+        "selected_present": read_back.contains(&format!("ItemId=\"{}\"", selected.offer_id)),
+        "deselected_offer": deselected.offer_id,
+        "deselected_tag": deselected.tag,
+        "deselected_absent": !read_back.contains(&format!("ItemId=\"{}\"", deselected.offer_id)),
+        "rewrites": REWRITES.load(Ordering::Relaxed),
+        "invalidation_unchanged": invalidation_unchanged,
+        "read_back": read_back,
+    });
+    let _ = std::fs::write(
+        dir.join("unlock-evidence.json"),
+        serde_json::to_vec_pretty(&evidence).unwrap_or_default(),
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -361,20 +674,64 @@ mod native_tests {
             unsafe { proc(qt, c"?replace@QByteArray@@QEAAAEAV1@HHPEBDH@Z") },
             Ordering::Release,
         );
-        let config = std::env::temp_dir().join(format!("patcher-native-test-{}.json", unsafe {
+        let dir = std::env::temp_dir().join(format!("patcher-native-policy-{}", unsafe {
             GetCurrentProcessId()
         }));
-        let json = serde_json::json!({"schema":1,"installation_identity":"native-fixture",
-            "manifest_digest":"a".repeat(64),"policy_revision":1,
-            "catalog":{"schema":1,"game_id":"sims4","entries":[{
-                "pack_id":"EP01","offer_id":"fixture-offer","group":"THESIMS4PC",
-                "tag":"fixture-tag","kind":"DEFAULT","version":"0","id":1}]},
-            "selection":{"dlc":{"EP01":true},"deferred":[],"language":null}});
-        std::fs::write(&config, serde_json::to_vec(&json).unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let policy = patcher_core::storage::Policy {
+            schema: 1,
+            game_id: "sims4".into(),
+            install: patcher_core::storage::Installation {
+                identity: "native-fixture".into(),
+                variant: "windows-native".into(),
+                roots: Default::default(),
+            },
+            revision: 1,
+            desired: patcher_core::model::Selection {
+                dlc: [("EP01".into(), true), ("EP02".into(), false)]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            applied: None,
+            preferences: Default::default(),
+            suspended: None,
+        };
+        policy.save(&dir).unwrap();
+        let catalog = patcher_core::entitlement::Catalog {
+            schema: 1,
+            game_id: "sims4".into(),
+            entries: vec![
+                patcher_core::entitlement::Entitlement {
+                    pack_id: "EP01".into(),
+                    offer_id: "selected-offer".into(),
+                    group: "THESIMS4PC".into(),
+                    tag: "selected-tag".into(),
+                    kind: "DEFAULT".into(),
+                    version: "0".into(),
+                    id: 1,
+                },
+                patcher_core::entitlement::Entitlement {
+                    pack_id: "EP02".into(),
+                    offer_id: "deselected-offer".into(),
+                    group: "THESIMS4PC".into(),
+                    tag: "deselected-tag".into(),
+                    kind: "DEFAULT".into(),
+                    version: "0".into(),
+                    id: 2,
+                },
+            ],
+        };
+        std::fs::write(
+            dir.join("entitlements.json"),
+            serde_json::to_vec(&catalog).unwrap(),
+        )
+        .unwrap();
         assert!(
             RUNTIME
                 .set(Mutex::new(
-                    crate::runtime::Runtime::load(config.clone()).unwrap()
+                    crate::runtime::Runtime::load(dir.clone()).unwrap()
                 ))
                 .is_ok()
         );
@@ -398,25 +755,43 @@ mod native_tests {
         assert_eq!(run(request), request);
         let rewritten = run(response);
         assert!(
-            rewritten.contains("fixture-offer"),
+            rewritten.contains("ItemId=\"selected-offer\""),
             "response was not rewritten"
         );
-        assert!(rewritten.contains("fixture-tag"));
+        assert!(rewritten.contains("selected-tag"));
+        assert!(
+            !rewritten.contains("deselected-offer"),
+            "disabled pack was enabled"
+        );
+        assert!(
+            !rewritten.contains("deselected-tag"),
+            "disabled pack was enabled"
+        );
         assert_eq!(
             run(response),
             response,
             "duplicate response must pass unchanged"
         );
         assert_eq!(REWRITES.load(Ordering::Relaxed), 1);
+        let (status, _) = patcher_core::entitlement::unlock_report(true, Some(&dir));
+        assert_ne!(
+            status, "enabled",
+            "a Qt test process is not EA Desktop and must not report unlock enabled"
+        );
         assert_eq!(run(request), request);
-        std::fs::remove_file(config).unwrap();
+        let policy_path = dir.join("policy.json");
+        let saved = std::fs::read(&policy_path).unwrap();
+        let mut changed = saved.clone();
+        changed[0] ^= 0xff;
+        std::fs::write(&policy_path, &changed).unwrap();
         assert_eq!(
             run(response),
             response,
-            "unapply invalidates the pending request"
+            "a changed selection leaves the next response unchanged"
         );
+        std::fs::write(&policy_path, &saved).unwrap();
         println!(
-            "Observed real Qt allocation, Rust replacement, Qt destruction, duplicate suppression and config-removal invalidation"
+            "Observed real Qt allocation, Rust replacement, Qt destruction, duplicate suppression and selection invalidation"
         );
     }
 }

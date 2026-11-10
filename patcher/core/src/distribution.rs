@@ -39,7 +39,12 @@ fn engine_name(os: &str) -> &'static str {
 fn required_files(os: &str) -> Result<&'static [&'static str]> {
     match os {
         "linux" => Ok(&["patcher", "lib/patcher-engine"]),
-        "windows" => Ok(&["patcher.exe", "patcher-engine.exe", "patcher-launch.exe"]),
+        "windows" => Ok(&[
+            "patcher.exe",
+            "patcher-engine.exe",
+            "patcher-launch.exe",
+            "version.dll",
+        ]),
         _ => bail!("Packaging for {os} is not yet validated"),
     }
 }

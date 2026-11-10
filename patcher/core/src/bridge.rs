@@ -113,6 +113,10 @@ pub struct Snapshot {
     /// Why Play cannot be used in this state, beyond what the installation itself allows.
     #[serde(skip)]
     launch_blocked: Option<String>,
+    /// enabled, disabled, unsupported, or failed. Enabled only after a verified rewrite.
+    pub unlock: String,
+    /// What that status means. It does not say the game is playable.
+    pub unlock_detail: String,
 }
 
 impl Default for Snapshot {
@@ -159,6 +163,8 @@ impl Default for Snapshot {
             mode_note: String::new(),
             checked_at: None,
             launch_blocked: None,
+            unlock: "unsupported".into(),
+            unlock_detail: "Unlock is not available on this system.".into(),
         }
     }
 }
@@ -612,6 +618,16 @@ impl Service {
     /// The snapshot as the interface sees it: with Play, patcher updates and every label.
     fn published(&self) -> Snapshot {
         let mut s = lock(&self.snapshot).clone();
+        let dir = lock(&self.local)
+            .as_ref()
+            .map(|g| g.state.clone())
+            .or_else(|| self.config.as_ref().map(|c| c.state.clone()));
+        let (state, detail) = crate::entitlement::unlock_report(
+            cfg!(all(windows, target_arch = "x86_64")),
+            dir.as_deref(),
+        );
+        s.unlock = state.into();
+        s.unlock_detail = detail;
         {
             let ctl = lock(&self.launch);
             self.overlay_launch(&mut s, &ctl);
@@ -963,6 +979,10 @@ impl Service {
         });
     }
     fn discover(self: &Arc<Self>) {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            let _ = crate::entitlement::install_windows_component();
+        }
         if let Some(error) = &self.config_error {
             self.failure(error);
             return;
@@ -1558,6 +1578,22 @@ impl Service {
             Ok(v) => v,
             Err(e) => return self.failure(&format!("Cannot save your choices: {e:#}")),
         };
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let component_note = match crate::entitlement::install_windows_component() {
+            Ok(path) => format!("Entitlement component installed at {}.", path.display()),
+            Err("component-missing") => {
+                "The entitlement component is not in this patcher release.".into()
+            }
+            Err("ea-desktop-missing") => {
+                "EA Desktop was not found, so the entitlement component was not installed.".into()
+            }
+            Err("component-replace") => "EA Desktop is using the entitlement component. Close \
+                 EA Desktop and open the patcher again."
+                .into(),
+            Err(_) => "The entitlement component could not be installed.".into(),
+        };
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let component_note = String::new();
         *lock(&self.local) = Some(LocalGame {
             candidate: c.clone(),
             state,
@@ -1565,7 +1601,11 @@ impl Service {
             location_from,
             packs: None,
             languages: vec![],
-            lines: vec![],
+            lines: if component_note.is_empty() {
+                vec![]
+            } else {
+                vec![component_note]
+            },
         });
         self.set_target(Some((&c.path, &c.source)), None);
         self.publish_local();
@@ -1579,9 +1619,23 @@ impl Service {
         };
         let packs = local::scan(&root);
         let languages = local::languages(&root);
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            if let Some(state) = lock(&self.local).as_ref().map(|g| g.state.clone()) {
+                let installed: std::collections::BTreeSet<String> = packs
+                    .iter()
+                    .filter(|p| p.status != local::Status::NotInstalled)
+                    .map(|p| p.id.clone())
+                    .collect();
+                let _ = crate::entitlement::record_installed_selection(&state, &installed);
+            }
+        }
         if let Some(g) = lock(&self.local).as_mut()
             && g.root() == root
         {
+            if let Ok(policy) = Policy::load(&g.state) {
+                g.policy = policy;
+            }
             g.packs = Some(packs);
             g.languages = languages;
         }

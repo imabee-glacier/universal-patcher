@@ -110,6 +110,11 @@ impl Layout {
         if let Some(dir) = std::env::var_os("PATCHER_HOME").filter(|d| !d.is_empty()) {
             return Ok(Self::at(PathBuf::from(dir)));
         }
+        Self::default_for_user()
+    }
+    /// OS application-data location, independent of a custom patcher installation. Shared
+    /// game-writer locks must stay here even when two patcher versions use different homes.
+    pub(crate) fn default_for_user() -> Result<Self> {
         let root = match platform()?.0 {
             "linux" => data_home()?.join("universal-patcher"),
             "macos" => home()?.join("Library/Application Support/Universal Patcher"),

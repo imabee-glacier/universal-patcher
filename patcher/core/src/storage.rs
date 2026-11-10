@@ -224,6 +224,16 @@ pub struct Lock {
     _file: File,
 }
 impl Lock {
+    /// All configurations for an installation share this per-user lock. Keep the file after
+    /// releasing it: unlinking a lock file can create two independently locked inodes.
+    pub fn installation(identity: &str) -> Result<Self> {
+        let key = blake3::hash(identity.as_bytes()).to_hex();
+        let directory = crate::app::Layout::default_for_user()?
+            .root
+            .join("installation-locks");
+        Self::acquire(&directory.join(format!("{key}.lock")))
+    }
+
     pub fn acquire(path: &Path) -> Result<Self> {
         fs::create_dir_all(path.parent().context("Lock parent missing")?)?;
         let f = OpenOptions::new()

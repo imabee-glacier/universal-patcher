@@ -1,0 +1,137 @@
+{
+  "schema": 1,
+  "observed_at": "2026-11-10T17:03:15.080542+00:00",
+  "platform": "Linux-7.1.3-2-appsynergy-x86_64-with-glibc2.44",
+  "engine_sha256": "cfe699c79cae0c46163bef7f7c3e7ac200c55c8b55e6c3247e7e998a20359651",
+  "scope": "Synthetic signed CLI fixture; no real game, platform unlock or online handoff established",
+  "commands": [
+    {
+      "name": "create",
+      "argv": [
+        "/home/imma/Downloads/universal-patcher/patcher/target/debug/patcher",
+        "fixture",
+        "/home/imma/Downloads/universal-patcher/patcher/runtime/observed-engine-20261110-2/fixture"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.049
+    },
+    {
+      "name": "interrupted",
+      "argv": [
+        "/home/imma/Downloads/universal-patcher/patcher/target/debug/patcher",
+        "run",
+        "--config",
+        "/home/imma/Downloads/universal-patcher/patcher/runtime/observed-engine-20261110-2/fixture/config.json",
+        "--interrupt-after-rename",
+        "1"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.022
+    },
+    {
+      "name": "recovered",
+      "argv": [
+        "/home/imma/Downloads/universal-patcher/patcher/target/debug/patcher",
+        "run",
+        "--config",
+        "/home/imma/Downloads/universal-patcher/patcher/runtime/observed-engine-20261110-2/fixture/config.json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.053
+    },
+    {
+      "name": "repaired",
+      "argv": [
+        "/home/imma/Downloads/universal-patcher/patcher/target/debug/patcher",
+        "run",
+        "--config",
+        "/home/imma/Downloads/universal-patcher/patcher/runtime/observed-engine-20261110-2/fixture/config.json",
+        "--verify"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.056
+    },
+    {
+      "name": "noop",
+      "argv": [
+        "/home/imma/Downloads/universal-patcher/patcher/target/debug/patcher",
+        "run",
+        "--config",
+        "/home/imma/Downloads/universal-patcher/patcher/runtime/observed-engine-20261110-2/fixture/config.json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.043
+    }
+  ],
+  "recovery": {
+    "replaced": [
+      "EP01/content.package"
+    ],
+    "deleted": [],
+    "preserved": [],
+    "journal_reset": false
+  },
+  "repair": {
+    "replaced": [
+      "EP01/content.package"
+    ],
+    "deleted": [],
+    "preserved": [],
+    "journal_reset": false
+  },
+  "noop": {
+    "replaced": [],
+    "deleted": [],
+    "preserved": [],
+    "journal_reset": false
+  },
+  "byte_comparisons": [
+    {
+      "path": "Data/base.package",
+      "bytes": 210000,
+      "actual_sha256": "a61ce00faf82405206729ea02bb892cf985b7a1820f82843f35e90fe716be512",
+      "source_sha256": "a61ce00faf82405206729ea02bb892cf985b7a1820f82843f35e90fe716be512"
+    },
+    {
+      "path": "EP01/content.package",
+      "bytes": 350000,
+      "actual_sha256": "664313093ab16e89c5126e3604eca8f58b06239086f6e32a5bf3de55cd53dae2",
+      "source_sha256": "664313093ab16e89c5126e3604eca8f58b06239086f6e32a5bf3de55cd53dae2"
+    }
+  ],
+  "disabled_pack_absent": true,
+  "choices_preserved": true,
+  "unrelated_file_preserved": true,
+  "applied": {
+    "manifest_hash": "2a85c3df38070b837c006bfa0a837ef0e759ac4db005f9ae87c021b072ed63db",
+    "release": "fixture-1",
+    "revision": 1
+  },
+  "logs_directory": "patcher/runtime/observed-engine-20261110-2",
+  "reproduce": "python3 patcher/tools/observe-engine.py patcher/target/debug/patcher <new-output-directory>",
+  "source_sha256": {
+    "patcher/core/src/engine.rs": "31ecd195aeb941da522fde57bd52f0aa1c2d32e64241bd0ce39ca29765258c6a",
+    "patcher/core/src/storage.rs": "8b2bdc93f039b2ee518fd5f04ff8796ccf3237f0c86926ab5573891056767219",
+    "patcher/core/src/app.rs": "ccc2cfb6071c0921beb8ebbdd1685a9c93c6a25788dbe965b96d953ddf7d436d",
+    "patcher/core/src/entitlement.rs": "896fd152a89daad4139df4edbffa63bd46155acf9477a40b79ec34ef251eba1e",
+    "patcher/core/src/entitlement_pe.rs": "d4925ff868bea619617c44644deb5b7e1ea39f357cf02065cb9a3fa69fa32a1a",
+    "patcher/core/tests/maintenance.rs": "e2c01994667eb0449d2523baec8caee8044870456dc92925fbfe629d752c8676",
+    "patcher/tools/observe-engine.py": "1d5b3b519e17fdc6c000bb4c48ee1617aeb31bed0e97c73de25a3599ae7b34d0"
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked --workspace",
+      "exit_code": 0,
+      "scope": "Linux host; native Windows-only and macOS-only behavior not executed"
+    },
+    {
+      "command": "cargo clippy --locked -p universal-patcher --all-targets -- -D warnings",
+      "exit_code": 0
+    },
+    {
+      "command": "cargo test --locked -p universal-patcher --test maintenance separate_state_directories_cannot_write_the_same_installation -- --exact",
+      "exit_code": 0,
+      "scope": "Same-process and child-process writer exclusion across separate state directories and PATCHER_HOME values"
+    }
+  ]
+}
