@@ -802,17 +802,53 @@ pub fn uninstall(layout: &Layout, remove_data: bool) -> Result<()> {
             _ => {}
         }
     }
-    // The running launcher removes itself last; Windows keeps it until the process exits.
+    // The running launcher lives in bin/. Windows will not delete a running program, so there
+    // what is left is handed to a process that removes it once this one has exited.
     let bin = layout.root.join("bin");
-    if cfg!(windows) {
-        let _ = fs::remove_dir_all(&bin);
-    } else {
-        remove_dir_if_present(&bin)?;
-    }
-    if remove_data {
+    let target = if remove_data {
         let _ = fs::remove_file(layout.root.join("install.lock"));
-        remove_dir_if_present(&layout.root)?;
+        layout.root.clone()
+    } else {
+        bin
+    };
+    if cfg!(windows) {
+        if fs::remove_dir_all(&target).is_err() && target.exists() {
+            remove_after_exit(&target)?;
+        }
+    } else {
+        remove_dir_if_present(&target)?;
     }
+    Ok(())
+}
+
+/// Deletes `dir` shortly after this process exits, for files Windows keeps while they run.
+#[cfg(windows)]
+fn remove_after_exit(dir: &Path) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    let dir = dir
+        .to_str()
+        .context("Install folder is not valid Unicode")?;
+    ensure!(!dir.contains('"'), "Install folder name cannot be quoted");
+    // Wait about two seconds, retrying while the launcher is still exiting.
+    // Quiet and detached from this terminal: no echo, no inherited input or output.
+    std::process::Command::new("cmd.exe")
+        .args(["/d", "/q", "/c"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .raw_arg(format!(
+            r#"for /l %i in (1,1,10) do (ping -n 2 127.0.0.1 >nul & rd /s /q "{dir}" 2>nul & if not exist "{dir}" exit /b 0)"#
+        ))
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()
+        .context("Cannot schedule removal of the launcher")?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn remove_after_exit(_dir: &Path) -> Result<()> {
     Ok(())
 }
 

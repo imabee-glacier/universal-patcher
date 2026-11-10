@@ -128,6 +128,10 @@ fn systemctl(args: &[&str]) -> Result<()> {
 /// Installs or removes scheduled maintenance. Idempotent.
 pub fn set_schedule(enabled: bool, engine: &Path, config: &Path) -> Result<()> {
     if !cfg!(target_os = "linux") {
+        // Turning maintenance on is refused here, so there is never anything to turn off.
+        if !enabled {
+            return Ok(());
+        }
         bail!("Scheduled maintenance is unsupported: this platform's scheduler is not validated");
     }
     let dir = unit_dir()?;
