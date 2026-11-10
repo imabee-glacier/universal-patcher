@@ -1,0 +1,1 @@
+The search for your game is wider on Windows: it reads where the EA app, Origin and Steam installers recorded their folders, every Steam library listed by Steam, and the usual game and Steam folders on every fixed drive. The folder picker appears only if none of these has the game.
