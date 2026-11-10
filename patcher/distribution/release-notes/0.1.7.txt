@@ -1,0 +1,5 @@
+The Windows build now includes the entitlement component and installs together with the patcher. When the patcher starts it places the component beside EA Desktop.
+
+The Windows release could not be packaged in 0.1.6 because that component was missing from the build. That is fixed.
+
+The patcher still finds The Sims 4 on its own and asks for a folder only when it cannot find one.

@@ -126,6 +126,9 @@ install(PROGRAMS "${PATCHER_WORKSPACE}/target/${RUST_PROFILE_DIR}/patcher.exe"
 # The Start menu shortcut opens this launcher; it has no console window.
 install(PROGRAMS "${PATCHER_WORKSPACE}/target/${RUST_PROFILE_DIR}/patcher-launch.exe"
   DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+# The entitlement component the engine copies beside the game; the packager requires it.
+install(FILES "${PATCHER_WORKSPACE}/target/${RUST_PROFILE_DIR}/patcher_unlocker.dll"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}" RENAME version.dll COMPONENT Runtime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.svg"
   "${CMAKE_CURRENT_SOURCE_DIR}/runner/resources/app_icon.ico"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)

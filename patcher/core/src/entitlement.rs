@@ -846,10 +846,7 @@ pub fn unlock_report(windows_x64: bool, dir: Option<&Path>) -> (&'static str, St
     if hook.result != "installed" {
         return (
             "failed",
-            format!(
-                "The entitlement hook did not install ({}).",
-                hook.result
-            ),
+            format!("The entitlement hook did not install ({}).", hook.result),
         );
     }
     let proof: UnlockProof = match crate::storage::read_checked(&dir.join(PROOF_NAME)) {
