@@ -359,7 +359,10 @@ fn install_module(module: HMODULE) -> Result<usize, &'static str> {
         .map(|slot| usize::from_le_bytes(image[slot.offset..slot.offset + 8].try_into().unwrap()))
         .collect();
     let original = addresses[0];
-    if original == 0 || addresses.iter().any(|address| *address != original && *address != observe_address)
+    if original == 0
+        || addresses
+            .iter()
+            .any(|address| *address != original && *address != observe_address)
     {
         return Err("import-address-mismatch");
     }

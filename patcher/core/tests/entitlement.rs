@@ -448,7 +448,10 @@ fn component_is_copied_into_the_destination_directory() {
     bytes.extend(std::iter::repeat(0).take(62));
     fs::write(&bundled, bytes).unwrap();
     place_component(&bundled, &dest).unwrap();
-    assert_eq!(fs::read(dest.join("version.dll")).unwrap(), fs::read(&bundled).unwrap());
+    assert_eq!(
+        fs::read(dest.join("version.dll")).unwrap(),
+        fs::read(&bundled).unwrap()
+    );
     place_component(&bundled, &dest).unwrap();
 }
 
