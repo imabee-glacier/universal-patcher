@@ -144,13 +144,161 @@ impl Probe {
                 .map(PathBuf::from)
         };
         if cfg!(windows) {
-            Self::windows(
+            let defaults = Self::windows(
                 env("ProgramFiles").as_deref(),
                 env("ProgramFiles(x86)").as_deref(),
-            )
+            );
+            #[cfg(windows)]
+            let found = defaults.with_windows_extras(
+                &windows::registry_games(),
+                &windows::registry_steam(),
+                &windows::fixed_drives(),
+            );
+            #[cfg(not(windows))]
+            let found = defaults;
+            found
         } else {
             Self::unix(&env("HOME").unwrap_or_default(), cfg!(target_os = "macos"))
         }
+    }
+
+    /// Adds what the installers recorded in the registry, checked first, and the usual game
+    /// and Steam folders on every fixed drive, checked after the defaults.
+    pub fn with_windows_extras(
+        mut self,
+        registry_games: &[PathBuf],
+        registry_steam: &[PathBuf],
+        drives: &[char],
+    ) -> Self {
+        let mut direct = registry_games.to_vec();
+        direct.append(&mut self.direct);
+        let mut steam_roots = registry_steam.to_vec();
+        steam_roots.append(&mut self.steam_roots);
+        for drive in drives {
+            let root = PathBuf::from(format!("{drive}:\\"));
+            for game in [
+                "Program Files/EA Games/The Sims 4",
+                "EA Games/The Sims 4",
+                "Program Files (x86)/Origin Games/The Sims 4",
+                "Origin Games/The Sims 4",
+                "Games/The Sims 4",
+            ] {
+                direct.push(join(&root, game));
+            }
+            for steam in [
+                "Program Files (x86)/Steam",
+                "Program Files/Steam",
+                "Steam",
+                "SteamLibrary",
+                "Games/Steam",
+            ] {
+                steam_roots.push(join(&root, steam));
+            }
+        }
+        self.direct = unique(direct);
+        self.steam_roots = unique(steam_roots);
+        self
+    }
+}
+
+/// Drops repeats, keeping the first. Windows paths compare without regard to case or separator.
+fn unique(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = BTreeSet::new();
+    paths
+        .into_iter()
+        .filter(|p| {
+            let key = if cfg!(windows) {
+                p.to_string_lossy().to_lowercase().replace('/', "\\")
+            } else {
+                p.to_string_lossy().into_owned()
+            };
+            seen.insert(key)
+        })
+        .collect()
+}
+
+/// What Windows itself records: installer registry entries and the machine's fixed drives.
+#[cfg(windows)]
+mod windows {
+    use std::path::PathBuf;
+    use windows_sys::Win32::{
+        Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives},
+        System::Registry::{
+            HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+        },
+    };
+
+    const DRIVE_FIXED: u32 = 3;
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(Some(0)).collect()
+    }
+
+    pub fn fixed_drives() -> Vec<char> {
+        // SAFETY: takes no arguments and only returns a bit mask.
+        let mask = unsafe { GetLogicalDrives() };
+        (0u8..26)
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| char::from(b'A' + i))
+            .filter(|d| {
+                let root = wide(&format!("{d}:\\"));
+                // SAFETY: `root` is a NUL-terminated UTF-16 string that outlives the call.
+                unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_FIXED }
+            })
+            .collect()
+    }
+
+    fn read(root: HKEY, key: &str, value: &str) -> Option<PathBuf> {
+        let (key, value) = (wide(key), wide(value));
+        let mut buffer = vec![0u16; 2048];
+        let mut bytes = (buffer.len() * 2) as u32;
+        // SAFETY: key and value are NUL-terminated and outlive the call; `bytes` holds the
+        // buffer's size in bytes, and the call writes at most that many.
+        let status = unsafe {
+            RegGetValueW(
+                root,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if status != 0 {
+            return None;
+        }
+        let chars = (bytes as usize / 2).saturating_sub(1).min(buffer.len());
+        let text = String::from_utf16(&buffer[..chars]).ok()?;
+        let text = text.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
+        (!text.is_empty()).then(|| PathBuf::from(text))
+    }
+
+    /// Where the EA app and Origin recorded the game.
+    pub fn registry_games() -> Vec<PathBuf> {
+        [
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Maxis\The Sims 4"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Maxis\The Sims 4"),
+        ]
+        .into_iter()
+        .filter_map(|(root, key)| read(root, key, "Install Dir"))
+        .collect()
+    }
+
+    /// Where Steam is installed; its libraryfolders.vdf lists every library on every drive.
+    pub fn registry_steam() -> Vec<PathBuf> {
+        [
+            (HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Valve\Steam",
+                "InstallPath",
+            ),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath"),
+        ]
+        .into_iter()
+        .filter_map(|(root, key, value)| read(root, key, value))
+        .collect()
     }
 }
 
@@ -183,16 +331,17 @@ pub fn discover(probe: &Probe, saved: Option<&Path>) -> Discovery {
             return result;
         }
     }
-    let mut libraries = BTreeSet::new();
-    for root in &probe.steam_roots {
-        libraries.insert(root.clone());
-        let vdf = join(root, "steamapps/libraryfolders.vdf");
+    let mut libraries = Vec::new();
+    for root in unique(probe.steam_roots.clone()) {
+        let vdf = join(&root, "steamapps/libraryfolders.vdf");
         result.checked.push(vdf.clone());
+        libraries.push(root);
         if let Ok(text) = fs::read_to_string(vdf) {
             libraries.extend(library_paths(&text));
         }
     }
-    let mut places: Vec<(PathBuf, &str)> = libraries
+    // A library may be listed by several roots, and Windows spells one folder many ways.
+    let mut places: Vec<(PathBuf, &str)> = unique(libraries)
         .into_iter()
         .map(|root| (join(&root, "steamapps/common/The Sims 4"), "Steam library"))
         .collect();
@@ -228,6 +377,53 @@ mod tests {
         assert_eq!(plain_windows(&long), None);
         assert_eq!(plain_windows(r"\\?\Volume{0}\games"), None);
         assert_eq!(plain_windows(r"C:\already\plain"), None);
+    }
+
+    #[test]
+    fn windows_search_covers_the_registry_and_every_fixed_drive() {
+        let pf = PathBuf::from(r"C:\Program Files");
+        let pf86 = PathBuf::from(r"C:\Program Files (x86)");
+        let registry_game = PathBuf::from(r"E:\Custom\The Sims 4");
+        let registry_steam = PathBuf::from(r"F:\Valve\Steam");
+        let probe = Probe::windows(Some(&pf), Some(&pf86)).with_windows_extras(
+            std::slice::from_ref(&registry_game),
+            std::slice::from_ref(&registry_steam),
+            &['C', 'D'],
+        );
+        // What the installers recorded is checked first.
+        assert_eq!(probe.direct[0], registry_game);
+        assert_eq!(probe.steam_roots[0], registry_steam);
+        // The defaults, then the usual folders on each drive.
+        assert!(probe.direct.contains(&join(&pf, "EA Games/The Sims 4")));
+        for expected in [
+            join(Path::new("D:\\"), "EA Games/The Sims 4"),
+            join(Path::new("D:\\"), "Program Files/EA Games/The Sims 4"),
+        ] {
+            assert!(probe.direct.contains(&expected), "{expected:?}");
+        }
+        for expected in [
+            join(Path::new("D:\\"), "SteamLibrary"),
+            join(Path::new("D:\\"), "Steam"),
+        ] {
+            assert!(probe.steam_roots.contains(&expected), "{expected:?}");
+        }
+        // Nothing is checked twice.
+        assert_eq!(unique(probe.direct.clone()), probe.direct);
+        assert_eq!(unique(probe.steam_roots.clone()), probe.steam_roots);
+        assert_eq!(probe.variant, "windows-native");
+    }
+
+    #[test]
+    fn a_folder_spelled_two_ways_is_checked_once_on_windows() {
+        let a = PathBuf::from(r"c:\program files (x86)\steam");
+        let b = PathBuf::from(r"C:\Program Files (x86)\Steam");
+        let c = PathBuf::from("C:/Program Files (x86)/Steam");
+        let kept = unique(vec![a.clone(), b, c]);
+        if cfg!(windows) {
+            assert_eq!(kept, vec![a]);
+        } else {
+            assert_eq!(kept.len(), 3, "other systems compare paths exactly");
+        }
     }
 
     #[test]
