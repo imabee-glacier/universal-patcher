@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:file_selector/file_selector.dart';
 
+import 'collection.dart';
 import 'core.dart';
 
 const ink = Color(0xff233b38);
@@ -119,6 +120,25 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
     }
   }
 
+  void openCollection(Map<String, dynamic> s) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CollectionPage(
+          status: s,
+          save: (dlc) {
+            final result = widget.core.command('SetPolicy', {
+              'revision': s['policy_revision'],
+              'dlc': dlc,
+            });
+            return result['accepted'] == true
+                ? null
+                : result['error']?.toString() ?? 'Your choices were not saved.';
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
@@ -128,12 +148,20 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
           final actions = List<String>.from(s['actions'] ?? []);
           // A game is in use, or found installations are listed to choose from.
           final located =
-              s['path'] != null ||
-              (s['candidates'] as List? ?? []).isNotEmpty;
+              s['path'] != null || (s['candidates'] as List? ?? []).isNotEmpty;
           final ready = s['ready'] == true;
           final fixture = s['fixture'] == true;
           final packs = List<Map<String, dynamic>>.from(s['packs'] ?? []);
           final active = actions.contains('Pause');
+          // The user's own installation, read in place (no release feed).
+          final local = s['state'] == 'installed';
+          final review = packs.any(
+            (p) =>
+                p['status'] != 'not_installed' &&
+                p['status'] != '' &&
+                p['answered'] != true &&
+                p['deferred'] != true,
+          );
           return LayoutBuilder(
             builder: (context, constraints) => SingleChildScrollView(
               child: ConstrainedBox(
@@ -272,7 +300,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                                 height: 1.6,
                               ),
                             ),
-                            if (active || s['bytes_total'] != null) ...[
+                            if (active || working.contains(s['state'])) ...[
                               const SizedBox(height: 24),
                               ProgressView(core: widget.core),
                             ],
@@ -282,7 +310,21 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                               runSpacing: 12,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                if (actions.contains('Resume'))
+                                if (local && review)
+                                  FilledButton.icon(
+                                    key: const Key('primary-action'),
+                                    onPressed: () => openCollection(s),
+                                    icon: const Icon(Icons.grid_view_rounded),
+                                    label: const Text('Review packs'),
+                                  )
+                                else if (local && actions.contains('Launch'))
+                                  FilledButton.icon(
+                                    key: const Key('primary-action'),
+                                    onPressed: () => send('Launch'),
+                                    icon: const Icon(Icons.play_arrow_rounded),
+                                    label: const Text('Play'),
+                                  )
+                                else if (actions.contains('Resume'))
                                   FilledButton.icon(
                                     key: const Key('primary-action'),
                                     onPressed: () => send('Resume'),
@@ -337,6 +379,18 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                                     ),
                                     label: const Text('Use a different folder'),
                                   ),
+                                if (local &&
+                                    review &&
+                                    actions.contains('Launch'))
+                                  OutlinedButton.icon(
+                                    key: const Key('play-action'),
+                                    onPressed: () => send('Launch'),
+                                    icon: const Icon(
+                                      Icons.play_arrow_rounded,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Play'),
+                                  ),
                                 if (actions.contains('Verify'))
                                   OutlinedButton.icon(
                                     key: const Key('verify-action'),
@@ -345,12 +399,29 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                                       Icons.verified_outlined,
                                       size: 18,
                                     ),
-                                    label: const Text('Verify files'),
+                                    label: Text(
+                                      local ? 'Check files' : 'Verify files',
+                                    ),
+                                  ),
+                                if (actions.contains('AcceptCheck'))
+                                  TextButton.icon(
+                                    key: const Key('accept-check'),
+                                    onPressed: () => send('AcceptCheck'),
+                                    icon: const Icon(
+                                      Icons.done_all_rounded,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Accept these changes'),
                                   ),
                                 if (actions.contains('Cancel'))
                                   TextButton(
+                                    key: const Key('stop-action'),
                                     onPressed: () => send('Cancel'),
-                                    child: const Text('Stop for now'),
+                                    child: Text(
+                                      s['state'] == 'verifying'
+                                          ? 'Stop check'
+                                          : 'Stop for now',
+                                    ),
                                   ),
                               ],
                             ),
@@ -412,7 +483,8 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                               key: const Key('packs-action'),
                               borderRadius: BorderRadius.circular(12),
                               onTap: packs.isNotEmpty
-                                  ? () => packSheet(s)
+                                  ? () =>
+                                        local ? openCollection(s) : packSheet(s)
                                   : null,
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -440,7 +512,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                                           ),
                                           Text(
                                             packs.isEmpty
-                                                ? 'Available after a verified feed is connected'
+                                                ? 'Shown once your game is found'
                                                 : collectionSummary(packs),
                                             style: const TextStyle(
                                               color: muted,
@@ -551,6 +623,10 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
   );
   void settings(Map<String, dynamic> s) {
     final saved = Map<String, dynamic>.from(s['preferences'] ?? const {});
+    final languages = List<String>.from(s['languages'] ?? const []);
+    String? language = s['language'] as String?;
+    // Download settings only mean something with a release feed.
+    final downloads = s['state'] != 'installed';
     final prefs = <String, dynamic>{
       'future_packs': saved['future_packs'] == true,
       'background': saved['background'] == true,
@@ -573,63 +649,102 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                 style: TextStyle(fontSize: 26, color: ink),
               ),
               const SizedBox(height: 12),
-              SwitchListTile(
-                key: const Key('pref-background'),
-                contentPadding: EdgeInsets.zero,
-                secondary: const Icon(Icons.schedule_outlined),
-                title: const Text('Maintain in the background'),
-                subtitle: const Text(
-                  'Checks at login and every 6 hours. Files never change while the game is running.',
-                ),
-                value: prefs['background'] as bool,
-                onChanged: (v) => update(() => prefs['background'] = v),
-              ),
-              SwitchListTile(
-                key: const Key('pref-future'),
-                contentPadding: EdgeInsets.zero,
-                secondary: const Icon(Icons.new_releases_outlined),
-                title: const Text('Include future packs automatically'),
-                subtitle: const Text(
-                  'New packs download without asking. This uses more disk space and bandwidth.',
-                ),
-                value: prefs['future_packs'] as bool,
-                onChanged: (v) => update(() => prefs['future_packs'] = v),
-              ),
-              SwitchListTile(
-                key: const Key('pref-metered'),
-                contentPadding: EdgeInsets.zero,
-                secondary: const Icon(Icons.signal_cellular_alt_outlined),
-                title: const Text('Allow metered connections'),
-                subtitle: const Text(
-                  'Background downloads otherwise wait for an unmetered network.',
-                ),
-                value: prefs['metered'] as bool,
-                onChanged: (v) => update(() => prefs['metered'] = v),
-              ),
-              const SizedBox(height: 8),
-              const Text('Download speed limit', style: TextStyle(color: ink)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final (label, value) in bandwidthChoices)
-                    ChoiceChip(
-                      label: Text(label),
-                      selected: prefs['bandwidth_bytes_per_second'] == value,
-                      onSelected: (_) => update(
-                        () => prefs['bandwidth_bytes_per_second'] = value,
+              if (languages.isNotEmpty) ...[
+                const Text('Game language', style: TextStyle(color: ink)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final code in languages)
+                      ChoiceChip(
+                        key: Key('lang-$code'),
+                        label: Text(languageName(code)),
+                        selected: language == code,
+                        onSelected: (_) => update(() => language = code),
                       ),
-                    ),
-                ],
-              ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Languages installed with your game. The choice is saved for when language switching is validated; your game is not changed yet.',
+                  style: TextStyle(color: muted, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (!downloads)
+                const ListTile(
+                  key: Key('downloads-unavailable'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.cloud_off_outlined),
+                  title: Text('Downloads and background maintenance'),
+                  subtitle: Text(
+                    'Available once game releases are published. Until then the patcher checks your own files only.',
+                  ),
+                ),
+              if (downloads && s['background_supported'] != false)
+                SwitchListTile(
+                  key: const Key('pref-background'),
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.schedule_outlined),
+                  title: const Text('Maintain in the background'),
+                  subtitle: const Text(
+                    'Checks at login and every 6 hours. Files never change while the game is running.',
+                  ),
+                  value: prefs['background'] as bool,
+                  onChanged: (v) => update(() => prefs['background'] = v),
+                ),
+              if (downloads) ...[
+                SwitchListTile(
+                  key: const Key('pref-future'),
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.new_releases_outlined),
+                  title: const Text('Include future packs automatically'),
+                  subtitle: const Text(
+                    'New packs download without asking. This uses more disk space and bandwidth.',
+                  ),
+                  value: prefs['future_packs'] as bool,
+                  onChanged: (v) => update(() => prefs['future_packs'] = v),
+                ),
+                SwitchListTile(
+                  key: const Key('pref-metered'),
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.signal_cellular_alt_outlined),
+                  title: const Text('Allow metered connections'),
+                  subtitle: const Text(
+                    'Background downloads otherwise wait for an unmetered network.',
+                  ),
+                  value: prefs['metered'] as bool,
+                  onChanged: (v) => update(() => prefs['metered'] = v),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Download speed limit',
+                  style: TextStyle(color: ink),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final (label, value) in bandwidthChoices)
+                      ChoiceChip(
+                        label: Text(label),
+                        selected: prefs['bandwidth_bytes_per_second'] == value,
+                        onSelected: (_) => update(
+                          () => prefs['bandwidth_bytes_per_second'] = value,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 16),
               const ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.language_outlined),
-                title: Text('Language and online sign-in'),
+                leading: Icon(Icons.person_outline),
+                title: Text('Online sign-in'),
                 subtitle: Text(
-                  'Unavailable until their platform behavior is verified.',
+                  'Unavailable until the sign-in handoff is verified.',
                 ),
               ),
               const SizedBox(height: 12),
@@ -643,7 +758,8 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                       Navigator.pop(sheetContext);
                       send('SetPolicy', {
                         'revision': s['policy_revision'],
-                        'preferences': prefs,
+                        if (downloads) 'preferences': prefs,
+                        if (languages.isNotEmpty) 'language': language,
                       });
                     },
                     child: const Text('Save preferences'),
@@ -662,7 +778,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
               Text(
                 s['fixture'] == true
                     ? 'Test mode uses an independent local signing key and synthetic content.'
-                    : 'This build cannot modify a real game until its platform capability is validated.',
+                    : 'The patcher reads your game folder; it does not change game files.',
                 style: const TextStyle(color: muted, fontSize: 12),
               ),
             ],
@@ -806,34 +922,37 @@ class ProgressView extends StatelessWidget {
   const ProgressView({super.key, required this.core});
   final Core core;
   @override
-  Widget build(
-    BuildContext context,
-  ) => ValueListenableBuilder<Map<String, dynamic>>(
-    valueListenable: core.progress,
-    builder: (context, p, _) {
-      final done = (p['bytes_done'] as num? ?? 0).toDouble(),
-          total = (p['bytes_total'] as num? ?? 0).toDouble();
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LinearProgressIndicator(
-            value: total > 0 ? (done / total).clamp(0, 1) : null,
-            minHeight: 5,
-            borderRadius: BorderRadius.circular(8),
-            backgroundColor: const Color(0xffd6e1d5),
-            color: teal,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            total > 0
-                ? '${formatBytes(done)} of ${formatBytes(total)} · ${formatBytes(p['bytes_per_second'] ?? 0)}/s'
-                : 'Checking local files',
-            style: const TextStyle(color: muted, fontSize: 12),
-          ),
-        ],
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<Map<String, dynamic>>(
+        valueListenable: core.progress,
+        builder: (context, p, _) {
+          final done = (p['bytes_done'] as num? ?? 0).toDouble(),
+              total = (p['bytes_total'] as num? ?? 0).toDouble();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LinearProgressIndicator(
+                value: total > 0 ? (done / total).clamp(0, 1) : null,
+                minHeight: 5,
+                borderRadius: BorderRadius.circular(8),
+                backgroundColor: const Color(0xffd6e1d5),
+                color: teal,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                [
+                  if ((p['files_total'] as num? ?? 0) > 0)
+                    '${p['files_done']} of ${p['files_total']} files',
+                  if (total > 0)
+                    '${formatBytes(done)} of ${formatBytes(total)}',
+                  if (total > 0) '${formatBytes(p['bytes_per_second'] ?? 0)}/s',
+                ].join(' · ').ifEmpty('Checking local files'),
+                style: const TextStyle(color: muted, fontSize: 12),
+              ),
+            ],
+          );
+        },
       );
-    },
-  );
 }
 
 class BadgeLabel extends StatelessWidget {
@@ -863,6 +982,7 @@ String stateLabel(String state) => switch (state) {
   'waiting' => 'Waiting for game to close',
   'ready' => 'Ready',
   'setup' => 'Setup',
+  'installed' => 'Installed',
   'checking' => 'Checking',
   'downloading' => 'Downloading',
   'applying' => 'Applying',
@@ -893,6 +1013,16 @@ const bandwidthChoices = [
 ];
 
 String collectionSummary(List<Map<String, dynamic>> packs) {
+  if (packs.any((p) => (p['status'] ?? '') != '')) {
+    final installed = packs.where((p) => p['status'] != 'not_installed').length;
+    final flagged = packs
+        .where((p) => p['status'] == 'incomplete' || p['status'] == 'changed')
+        .length;
+    return [
+      '$installed of ${packs.length} installed',
+      if (flagged > 0) '$flagged ${flagged == 1 ? 'needs' : 'need'} attention',
+    ].join(' · ');
+  }
   final selected = packs.where((p) => p['selected'] == true).length;
   final fresh = packs
       .where((p) => p['answered'] != true && p['deferred'] != true)
@@ -900,4 +1030,40 @@ String collectionSummary(List<Map<String, dynamic>> packs) {
   final summary = '$selected of ${packs.length} packs selected';
   if (fresh == 0) return summary;
   return '$summary - $fresh new ${fresh == 1 ? 'pack' : 'packs'} to review';
+}
+
+/// States with work in progress, where progress is shown.
+const working = {
+  'verifying',
+  'downloading',
+  'applying',
+  'checking',
+  'paused',
+  'waiting',
+};
+
+String languageName(String code) => switch (code) {
+  'ENG_US' => 'English',
+  'GER_DE' => 'Deutsch',
+  'FRE_FR' => 'Français',
+  'SPA_ES' => 'Español',
+  'ITA_IT' => 'Italiano',
+  'POR_BR' => 'Português (Brasil)',
+  'DUT_NL' => 'Nederlands',
+  'POL_PL' => 'Polski',
+  'RUS_RU' => 'Русский',
+  'CZE_CZ' => 'Čeština',
+  'DAN_DK' => 'Dansk',
+  'FIN_FI' => 'Suomi',
+  'NOR_NO' => 'Norsk',
+  'SWE_SE' => 'Svenska',
+  'JPN_JP' => '日本語',
+  'KOR_KR' => '한국어',
+  'CHS_CN' => '简体中文',
+  'CHT_CN' => '繁體中文',
+  _ => code,
+};
+
+extension on String {
+  String ifEmpty(String fallback) => isEmpty ? fallback : this;
 }

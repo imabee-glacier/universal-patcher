@@ -6,6 +6,7 @@ pub mod distribution;
 pub mod engine;
 pub mod fixture;
 pub mod health;
+pub mod local;
 pub mod model;
 pub mod os;
 pub mod publisher;

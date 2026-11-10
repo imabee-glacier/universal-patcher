@@ -188,7 +188,7 @@ jobs:
       - name: Bundle contents
         working-directory: patcher/app/build/windows/x64/runner/Release
         run: |
-          foreach ($f in 'patcher.exe', 'patcher_core.dll', 'patcher-engine.exe') {
+          foreach ($f in 'patcher.exe', 'patcher_core.dll', 'patcher-engine.exe', 'patcher-launch.exe', 'data\app_icon.ico') {
             if (-not (Test-Path $f)) { throw "Bundle is missing $f" }
           }
           & .\patcher-engine.exe --version

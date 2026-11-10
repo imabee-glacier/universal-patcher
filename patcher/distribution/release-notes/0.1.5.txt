@@ -1,0 +1,7 @@
+Your collection: every Sims 4 pack, shown as cards you can search and filter by kind and status. Each pack shows whether it is installed, not installed or incomplete, its size on disk, and exactly which files are missing. Tick the packs you want to keep; on first run the packs installed on your computer are proposed.
+
+Check files: reads every file of the game and your packs, records how they look, and on later checks tells you per pack which files changed, disappeared or appeared. After a game update you can accept the changes as the new reference.
+
+Play starts The Sims 4 through Steam or the EA app. Settings show the game languages installed on your computer.
+
+On Windows, opening Universal Patcher no longer shows a console window.
