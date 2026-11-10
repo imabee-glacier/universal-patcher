@@ -262,6 +262,12 @@ pub enum Event {
     Commit {
         operation: String,
     },
+    /// A pending operation that recovery found unfinished and could not complete: its output was
+    /// missing, invalid or no longer authorized, or the destination changed. The destination was
+    /// left as found, and the file is planned again from its actual content.
+    Abandon {
+        operation: String,
+    },
     /// An unfinished run was replaced by a run with a different binding.
     Supersede {
         from: Binding,
@@ -278,6 +284,16 @@ struct Record {
     previous: String,
     event: Event,
     checksum: String,
+}
+/// An operation with a recorded intent and no recorded commit or abandonment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingOperation {
+    pub operation: String,
+    pub root_id: String,
+    pub path: String,
+    pub before: Option<String>,
+    pub target: Option<String>,
+    pub temporary: Option<String>,
 }
 /// Marks a journal whose content cannot be trusted; full reconciliation is required.
 #[derive(Debug)]
@@ -355,6 +371,39 @@ impl Journal {
             }
         }
         None
+    }
+    /// Operations whose intent was journaled but whose outcome was not, in journal order.
+    pub fn pending(&self) -> Vec<PendingOperation> {
+        let mut open: Vec<PendingOperation> = Vec::new();
+        for e in &self.events {
+            match e {
+                Event::Intent {
+                    operation,
+                    root_id,
+                    path,
+                    before,
+                    target,
+                    temporary,
+                } => open.push(PendingOperation {
+                    operation: operation.clone(),
+                    root_id: root_id.clone(),
+                    path: path.clone(),
+                    before: before.clone(),
+                    target: target.clone(),
+                    temporary: temporary.clone(),
+                }),
+                Event::Commit { operation } | Event::Abandon { operation } => {
+                    open.retain(|p| p.operation != *operation)
+                }
+                Event::Complete { .. } => open.clear(),
+                Event::Bind { .. } | Event::Supersede { .. } => {}
+            }
+        }
+        open
+    }
+    /// The sequence number the next record will carry.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
     }
     pub fn append(&mut self, event: Event) -> Result<()> {
         let checksum = blake3::hash(&serde_json::to_vec(&(self.sequence, &self.last, &event))?)

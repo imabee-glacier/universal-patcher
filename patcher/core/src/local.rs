@@ -1,13 +1,11 @@
 //! The user's own Sims 4 installation, read in place: which packs are installed and complete,
-//! which languages are installed, whether files changed since the last check, and launching the
-//! game. Nothing here needs a published release, and nothing here writes inside the game folder.
-use anyhow::{Context, Result, bail, ensure};
-use serde::{Deserialize, Serialize};
+//! which languages are installed, and how the game is started. Nothing here needs a published
+//! release, and nothing here writes inside the game folder.
+use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -287,215 +285,118 @@ pub fn languages(root: &Path) -> Vec<String> {
     found.sort();
     found
 }
-
-/// The pack a game file belongs to, or `None` for the base game.
-pub fn owner(relative: &str) -> Option<String> {
-    let mut parts = relative.split('/');
-    let first = parts.next()?;
-    if is_pack_id(first) {
-        return Some(first.into());
-    }
-    if first == "Delta"
-        && let Some(id) = parts.next()
-        && is_pack_id(id)
-    {
-        return Some(id.into());
-    }
-    None
-}
-
-/// The folders whose files belong to the game: the base game and every pack. Installers,
-/// support tools and soundtracks are left out; saves and mods live elsewhere.
-fn in_scope(relative: &str) -> bool {
-    let first = relative.split('/').next().unwrap_or_default();
-    matches!(first, "Data" | "Delta" | "Game") || is_pack_id(first)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Recorded {
-    pub size: u64,
-    pub hash: String,
-}
-
-/// The fingerprint of every game file at the last accepted check.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Baseline {
-    pub schema: u32,
-    pub recorded_at: String,
-    pub files: BTreeMap<String, Recorded>,
-}
-
-impl Baseline {
-    pub fn load(path: &Path) -> Option<Self> {
-        let bytes = fs::read(path).ok()?;
-        let baseline: Self =
-            serde_json::from_value(crate::strict_json::parse(&bytes).ok()?).ok()?;
-        (baseline.schema == 1).then_some(baseline)
-    }
-    pub fn save(&self, path: &Path) -> Result<()> {
-        crate::storage::atomic_write(path, &serde_json::to_vec(self)?)
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct PackCheck {
-    pub files: u64,
-    pub changed: Vec<String>,
-    pub missing: Vec<String>,
-    pub added: Vec<String>,
-}
-
-impl PackCheck {
-    pub fn clean(&self) -> bool {
-        self.changed.is_empty() && self.missing.is_empty() && self.added.is_empty()
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CheckReport {
-    /// True when there was no earlier check to compare with; this check became the baseline.
-    pub first: bool,
-    pub files: u64,
-    pub bytes: u64,
-    /// Results by pack id, and `base` for the base game.
-    pub packs: BTreeMap<String, PackCheck>,
-    /// The fingerprints just taken, for accepting them as the new baseline.
-    #[serde(skip)]
-    pub current: BTreeMap<String, Recorded>,
-}
-
-pub struct CheckProgress {
-    pub files_done: usize,
-    pub files_total: usize,
-    pub bytes_done: u64,
-    pub bytes_total: u64,
-    pub current: String,
-}
-
-fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf, u64)>) -> Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("Reading {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        let kind = entry.file_type()?;
-        let relative = path
-            .strip_prefix(root)?
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        if !in_scope(&relative) {
-            continue;
-        }
-        if kind.is_dir() {
-            walk(root, &path, out)?;
-        } else if kind.is_file() {
-            out.push((relative, path, entry.metadata()?.len()));
-        }
-    }
-    Ok(())
-}
-
-/// Hashes every game file and compares it with `baseline`. Read-only: the game folder is never
-/// written. Without a baseline the result becomes the first one. `stop` ends the check early.
-pub fn check(
-    root: &Path,
-    baseline: Option<&Baseline>,
-    stop: &AtomicBool,
-    mut progress: impl FnMut(CheckProgress),
-) -> Result<CheckReport> {
-    let mut files = Vec::new();
-    walk(root, root, &mut files)?;
-    files.sort();
-    let bytes_total: u64 = files.iter().map(|f| f.2).sum();
-    let mut current = BTreeMap::new();
-    let mut bytes_done = 0;
-    for (i, (relative, path, size)) in files.iter().enumerate() {
-        if stop.load(Ordering::Acquire) {
-            bail!("Check stopped");
-        }
-        progress(CheckProgress {
-            files_done: i,
-            files_total: files.len(),
-            bytes_done,
-            bytes_total,
-            current: relative.clone(),
-        });
-        let (hash, read) = crate::storage::hash_file(path)?;
-        ensure!(
-            read == *size,
-            "{relative} changed while it was being checked"
-        );
-        current.insert(relative.clone(), Recorded { size: read, hash });
-        bytes_done += size;
-    }
-    let mut packs: BTreeMap<String, PackCheck> = BTreeMap::new();
-    let key = |relative: &str| owner(relative).unwrap_or_else(|| "base".into());
-    for (relative, now) in &current {
-        let entry = packs.entry(key(relative)).or_default();
-        entry.files += 1;
-        match baseline.and_then(|b| b.files.get(relative)) {
-            Some(before) if before != now => entry.changed.push(relative.clone()),
-            None if baseline.is_some() => entry.added.push(relative.clone()),
-            _ => {}
-        }
-    }
-    if let Some(b) = baseline {
-        for relative in b.files.keys().filter(|r| !current.contains_key(*r)) {
-            packs
-                .entry(key(relative))
-                .or_default()
-                .missing
-                .push(relative.clone());
-        }
-    }
-    Ok(CheckReport {
-        first: baseline.is_none(),
-        files: current.len() as u64,
-        bytes: bytes_total,
-        packs,
-        current,
-    })
-}
-
 /// Steam's id for The Sims 4.
-const STEAM_APP_ID: u32 = 1_222_670;
+pub const STEAM_APP_ID: u32 = 1_222_670;
 
-/// Starts the game the way its store expects: through Steam for a Steam installation (Steam
-/// then applies its own launch options), otherwise the game executable, which the EA app takes
-/// over on Windows.
-pub fn launch(root: &Path, source: &str) -> Result<()> {
-    let steam = source == "Steam library" || root.to_string_lossy().contains("steamapps");
-    let mut command = if steam {
-        let url = format!("steam://rungameid/{STEAM_APP_ID}");
-        if cfg!(windows) {
-            let mut c = std::process::Command::new("cmd.exe");
-            crate::app::no_window(&mut c);
-            c.args(["/d", "/c", "start", "", &url]);
-            c
-        } else if cfg!(target_os = "macos") {
-            let mut c = std::process::Command::new("open");
-            c.arg(url);
-            c
-        } else {
-            let mut c = std::process::Command::new("xdg-open");
-            c.arg(url);
-            c
-        }
-    } else if cfg!(windows) {
-        let exe = root.join("Game").join("Bin").join("TS4_x64.exe");
-        ensure!(exe.is_file(), "The game executable was not found");
-        let mut c = std::process::Command::new(exe);
-        c.current_dir(root.join("Game").join("Bin"));
-        c
-    } else {
-        bail!("Launching this installation is only available through Steam on this system")
-    };
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    command.spawn().context("Could not start the game")?;
-    Ok(())
+/// True for an installation inside a Steam library.
+pub fn is_steam(root: &Path, source: &str) -> bool {
+    source == "Steam library"
+        || root
+            .components()
+            .any(|c| c.as_os_str().eq_ignore_ascii_case("steamapps"))
+}
+
+/// A program to start, with its arguments, extra environment and working folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    pub program: PathBuf,
+    pub args: Vec<OsString>,
+    pub env: Vec<(String, OsString)>,
+    pub dir: Option<PathBuf>,
+}
+
+/// How the patcher starts this installation. The game is started wherever it came from: a
+/// store, a plain folder, or a Wine prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Launch {
+    /// A Steam library on a system where the game needs Steam's compatibility layer: Steam
+    /// starts it.
+    Steam,
+    /// The game program itself, directly or through Wine.
+    Program(Run),
+    /// Nothing here can start it; the reason says what is missing.
+    Unsupported(String),
+}
+
+/// The game program, relative to the game folder.
+pub const GAME_PROGRAM: &str = "Game/Bin/TS4_x64.exe";
+
+/// The Wine prefix a game folder lies in: the folder holding the `drive_c` above it.
+pub fn wine_prefix(root: &Path) -> Option<PathBuf> {
+    root.ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == "drive_c"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+}
+
+/// What this system offers for starting a Windows program that is not native here.
+#[derive(Debug, Clone, Default)]
+pub struct Runners {
+    /// Steam links can be opened.
+    pub steam_links: bool,
+    /// The `wine` program, when installed.
+    pub wine: Option<PathBuf>,
+}
+
+/// Decides how to start the game at `root`. `windows` and `mac` name the system the patcher
+/// runs on.
+pub fn how_to_launch_on(
+    root: &Path,
+    source: &str,
+    windows: bool,
+    mac: bool,
+    runners: &Runners,
+) -> Launch {
+    if mac && root.extension().is_some_and(|e| e == "app") {
+        return Launch::Program(Run {
+            program: "/usr/bin/open".into(),
+            args: vec![root.as_os_str().to_owned()],
+            env: vec![],
+            dir: None,
+        });
+    }
+    let program = GAME_PROGRAM
+        .split('/')
+        .fold(root.to_path_buf(), |p, c| p.join(c));
+    if !program.is_file() {
+        return Launch::Unsupported(format!("The game program is missing ({GAME_PROGRAM})."));
+    }
+    let dir = program.parent().map(Path::to_path_buf);
+    if windows {
+        return Launch::Program(Run {
+            program,
+            args: vec![],
+            env: vec![],
+            dir,
+        });
+    }
+    if is_steam(root, source) && runners.steam_links {
+        return Launch::Steam;
+    }
+    match &runners.wine {
+        Some(wine) => Launch::Program(Run {
+            program: wine.clone(),
+            args: vec![program.into_os_string()],
+            env: wine_prefix(root)
+                .map(|prefix| ("WINEPREFIX".to_string(), prefix.into_os_string()))
+                .into_iter()
+                .collect(),
+            dir,
+        }),
+        None => Launch::Unsupported(
+            "This is the Windows version of the game, and Wine is not installed, so it cannot \
+             be started on this computer."
+                .into(),
+        ),
+    }
+}
+
+pub fn how_to_launch(root: &Path, source: &str, runners: &Runners) -> Launch {
+    how_to_launch_on(
+        root,
+        source,
+        cfg!(windows),
+        cfg!(target_os = "macos"),
+        runners,
+    )
 }

@@ -146,6 +146,74 @@ fn windows_probe_finds_ea_app_and_extra_steam_libraries() {
     );
 }
 
+fn bundle(dir: &Path, name: &str, plist: &[u8]) -> std::path::PathBuf {
+    let bundle = dir.join(name);
+    std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+    std::fs::write(bundle.join("Contents/Info.plist"), plist).unwrap();
+    bundle
+}
+
+fn xml_plist(id: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\
+         <key>CFBundleName</key>\n<string>Game</string>\n\
+         <key>CFBundleIdentifier</key>\n<string>{id}</string>\n</dict>\n</plist>\n"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn mac_probe_finds_the_game_bundle_but_does_not_maintain_it() {
+    use patcher_core::discovery::{self, Probe, discover};
+    let t = tempfile::tempdir().unwrap();
+    let applications = t.path().join("Applications");
+    let home_applications = t.path().join("home/Applications");
+    let game = bundle(
+        &applications,
+        "The Sims 4.app",
+        &xml_plist("com.ea.mac.thesims4"),
+    );
+    bundle(&applications, "Other.app", &xml_plist("com.example.other"));
+    let binary = bundle(&home_applications, "Packed.app", b"bplist00\x00\x01binary");
+    std::fs::create_dir_all(applications.join("NotABundle")).unwrap();
+    let probe = Probe {
+        steam_roots: Vec::new(),
+        direct: Vec::new(),
+        mac_applications: vec![applications.clone(), home_applications.clone()],
+        variant: "macos-native",
+    };
+    let found = discover(&probe, None);
+    assert_eq!(found.candidates.len(), 1, "{found:?}");
+    let c = &found.candidates[0];
+    assert_eq!(c.path, std::fs::canonicalize(&game).unwrap());
+    assert_eq!(c.variant, "macos-native");
+    assert!(!c.maintenance_supported);
+    assert_eq!(c.unsupported_reason(), Some(discovery::MAC_UNVERIFIED));
+    assert!(found.checked.contains(&applications));
+    assert!(found.checked.contains(&home_applications));
+
+    let (_, unresolved, _) = discovery::mac_bundles(&probe.mac_applications);
+    assert_eq!(unresolved.len(), 1, "{unresolved:?}");
+    assert_eq!(unresolved[0].path, binary);
+    assert!(unresolved[0].reason.contains("binary"));
+
+    // A saved bundle is validated by its identifier, and anything else is refused.
+    let saved = discover(&probe, Some(&game));
+    assert_eq!(saved.candidates.len(), 1);
+    assert_eq!(saved.candidates[0].source, "saved installation");
+    assert!(
+        discovery::validate(&applications.join("Other.app"), "picked", "macos-native").is_err()
+    );
+    assert!(discovery::validate(&binary, "picked", "macos-native").is_err());
+    // Mac folders are searched only on a Mac.
+    assert!(Probe::unix(t.path(), false).mac_applications.is_empty());
+    assert!(
+        Probe::unix(t.path(), true)
+            .mac_applications
+            .contains(&t.path().join("Applications"))
+    );
+}
+
 #[test]
 fn linux_probe_reports_every_location_checked() {
     use patcher_core::discovery::{Probe, discover};

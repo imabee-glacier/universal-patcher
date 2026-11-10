@@ -1,7 +1,7 @@
 // Loads the published website in Chromium and checks what a visitor sees: no Content Security
-// Policy violations or script errors, a verified Linux download with its one-line command and
+// Policy violations or script errors, an offered Linux download with its one-line command and
 // no architecture question, release notes and a fresh service status from the published data,
-// the processor question on macOS only, and downloads only for platforms the catalog verifies.
+// the processor question on macOS only, and downloads only for platforms the catalog offers.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 
@@ -30,10 +30,10 @@ const catalog = await (await page.request.get(`${origin}data/catalog.json`)).jso
 const latest = catalog.releases.at(-1);
 const notes = await page.textContent('#release-notes');
 assert.ok(notes.includes(`Version ${latest.version}`) && latest.notes.every(n => notes.includes(n)), `release notes for ${latest.version} are not shown`);
-assert.match(await page.textContent('#service-status'), /Services operational/);
+assert.match(await page.textContent('#service-status'), /Download service reachable/);
 await page.screenshot({ path: `${shots}/site-linux.png`, fullPage: true });
 
-const offered = (os, arch) => catalog.downloads.some(d => d.os === os && d.arch === arch && d.verified);
+const offered = (os, arch) => catalog.downloads.some(d => d.os === os && d.arch === arch && (d.offered ?? d.verified));
 await page.click('[data-os="windows"]');
 assert.equal(await page.locator('.architecture').isVisible(), false, 'Windows asks no architecture');
 assert.equal(await page.locator('#download-link').isVisible(), offered('windows', 'x86_64'), 'Windows download follows the catalog');

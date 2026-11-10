@@ -280,13 +280,17 @@ impl HttpSource {
         if status == reqwest::StatusCode::OK {
             offset = 0;
         } else {
-            let expected = format!("bytes {}-{}/{}", offset, o.encoded_size - 1, o.encoded_size);
+            // An empty object has no byte range, so no partial response can continue it.
+            let expected = o
+                .encoded_size
+                .checked_sub(1)
+                .map(|last| format!("bytes {}-{}/{}", offset, last, o.encoded_size));
             let range = response
                 .headers()
                 .get("content-range")
                 .and_then(|v| v.to_str().ok());
             let same = offset == 0 || etag.as_deref() == saved.as_ref().map(|v| v.etag.as_str());
-            if range != Some(expected.as_str()) || !same {
+            if expected.is_none() || range != expected.as_deref() || !same {
                 stop(discard(&[part, validator]))?;
                 return Err(Failure::Retry(
                     anyhow::anyhow!("Partial response does not continue the saved download"),

@@ -399,7 +399,8 @@ fn website_catalog_follows_published_releases() {
     let download = &first["downloads"][0];
     assert_eq!(download["os"], os);
     assert_eq!(download["arch"], web_arch);
-    assert_eq!(download["verified"], true);
+    assert_eq!(download["offered"], true);
+    assert!(download.get("verified").is_none());
     assert_eq!(download["version"], "1.0.0");
     assert_eq!(
         download["install_script"],
@@ -426,14 +427,14 @@ fn website_catalog_follows_published_releases() {
     assert_eq!(versions, ["1.0.0", "1.1.0"]);
     assert_eq!(second["downloads"][0]["version"], "1.1.0");
 
-    // A platform that is packaged but not offered is listed as unverified.
+    // A platform that is packaged but not offered is listed as not offered.
     let build = env.t.path().join("build-1.2.0");
     bundle(&build, true);
     let staging = env.t.path().join("staging-1.2.0");
     distribution::package_app(&build, "1.2.0", os, arch, &staging).unwrap();
     env.publish(&staging, &distribution::Listing::default())
         .unwrap();
-    assert_eq!(catalog(&repo)["downloads"][0]["verified"], false);
+    assert_eq!(catalog(&repo)["downloads"][0]["offered"], false);
 
     // Refusals happen before anything is published.
     let build = env.t.path().join("build-1.3.0");

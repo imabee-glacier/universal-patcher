@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "observed_at": "2026-11-10T14:58:55.167973+00:00",
+  "platform": "Windows 11 Enterprise x64",
+  "access": "SSH public-key authentication",
+  "game_version_observed": "1.129.39.1030",
+  "ea_app_version_observed": "13, 822, 0, 6335",
+  "qt_core_version_observed": "5.15.2.0",
+  "test_target": "x86_64-pc-windows-gnu",
+  "test_executable_sha256": "137093d872a50ef9e7c2f9a0da7bc09fe00852352a59c0d211177af14f6f44a8",
+  "source_sha256": {
+    "patcher/core/src/entitlement.rs": "cfcae213ef401684466533d911f897a898d812d33abafae9904d937136d28244",
+    "patcher/core/tests/entitlement.rs": "80542b3c9dc0b5dfef39c7ccf2731ad5cd7a8a29d520ee8d250a88d02252214b"
+  },
+  "tests_passed": [
+    "bounds_and_entities",
+    "attribute_item_id_and_child_items_have_different_meanings",
+    "malformed_and_unrecognized_queries_fail_closed",
+    "unknown_selected_pack_is_not_silently_ignored",
+    "policy_change_invalidates_old_session",
+    "policy_selection_is_enforced_for_all_filter_forms",
+    "catalog_roundtrip_and_invalid_schemas",
+    "conflicting_pack_ownership_and_large_catalogs_are_rejected",
+    "sessions_cannot_cross_installations_releases_or_unapply"
+  ],
+  "tests_failed": 0,
+  "scope": "Synthetic entitlement protocol and session invalidation tests executed on native Windows. Session invalidation is not a native uninstall/reinstall test. No game or EA app files changed.",
+  "unverified": [
+    "Native request interception and game handoff",
+    "Real pack-to-entitlement ownership mappings",
+    "Unlock installation, journal recovery and postconditions",
+    "EA account acquisition and renewal",
+    "macOS native integration"
+  ],
+  "implementation_complete": false
+}

@@ -4,12 +4,10 @@ import 'package:file_selector/file_selector.dart';
 
 import 'collection.dart';
 import 'core.dart';
+import 'play_button.dart';
+import 'tokens.dart';
 
-const ink = Color(0xff233b38);
-const teal = Color(0xff176b5b);
-const paper = Color(0xfff5f3ed);
-const muted = Color(0xff697772);
-const line = Color(0xffdedfd6);
+export 'tokens.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +19,7 @@ void main() {
         home: Scaffold(
           body: Center(
             child: Padding(
-              padding: const EdgeInsets.all(32),
+              padding: const EdgeInsets.all(space32),
               child: Text(
                 'The maintenance engine could not start.\nReinstall the patcher to restore its native library.\n\n$error',
               ),
@@ -34,16 +32,28 @@ void main() {
 }
 
 class PatcherApp extends StatelessWidget {
-  const PatcherApp({super.key, required this.core});
+  const PatcherApp({super.key, required this.core, this.fontFamily});
   final Core core;
+
+  /// The system sans-serif unless a test names a font.
+  final String? fontFamily;
+
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Patcher',
+    title: 'Universal Patcher',
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       useMaterial3: true,
+      fontFamily: fontFamily,
       scaffoldBackgroundColor: paper,
-      colorScheme: ColorScheme.fromSeed(seedColor: teal, surface: paper),
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: teal,
+        primary: teal,
+        onPrimary: onTeal,
+        surface: paper,
+        onSurface: ink,
+        error: error,
+      ),
       textTheme: const TextTheme(
         bodyMedium: TextStyle(color: ink, fontSize: 15, height: 1.5),
         bodySmall: TextStyle(color: muted, fontSize: 12, height: 1.5),
@@ -51,22 +61,27 @@ class PatcherApp extends StatelessWidget {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: teal,
-          foregroundColor: Colors.white,
+          foregroundColor: onTeal,
           minimumSize: const Size(120, 48),
+          padding: const EdgeInsets.symmetric(horizontal: space24),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(radiusPill),
           ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: ink,
-          minimumSize: const Size(100, 46),
+          minimumSize: const Size(100, 44),
+          padding: const EdgeInsets.symmetric(horizontal: space16),
           side: const BorderSide(color: line),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(radiusPill),
           ),
         ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: teal),
       ),
       dividerColor: line,
       snackBarTheme: const SnackBarThemeData(backgroundColor: ink),
@@ -74,6 +89,30 @@ class PatcherApp extends StatelessWidget {
     home: Home(core: core),
   );
 }
+
+/// Snapshot fields that change while work progresses; the main screen does not rebuild for them.
+const progressKeys = {
+  'revision',
+  'bytes_done',
+  'bytes_total',
+  'bytes_per_second',
+  'files_done',
+  'files_total',
+  'detail',
+};
+
+/// How often the main screen was built; tests check that progress alone does not rebuild it.
+@visibleForTesting
+int homeBuilds = 0;
+
+List<String> actionsOf(Map<String, dynamic> s) =>
+    List<String>.from(s['actions'] ?? const []);
+
+String labelOf(Map<String, dynamic> s, String action) =>
+    (s['labels'] as Map?)?[action]?.toString() ?? action;
+
+String? unavailableOf(Map<String, dynamic> s, String action) =>
+    (s['unavailable'] as Map?)?[action]?.toString();
 
 class Home extends StatefulWidget {
   const Home({super.key, required this.core});
@@ -100,7 +139,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
 
   void send(String command, [Map<String, dynamic> args = const {}]) {
     final result = widget.core.command(command, args);
-    if (result['accepted'] != true) {
+    if (result['accepted'] != true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -120,557 +159,470 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
     }
   }
 
+  /// Runs an action the engine offered. Choosing a folder opens the picker first.
+  void run(String action) {
+    if (action == 'ConfirmInstall') {
+      chooseFolder();
+    } else {
+      send(action);
+    }
+  }
+
   void openCollection(Map<String, dynamic> s) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CollectionPage(
-          status: s,
-          save: (dlc) {
-            final result = widget.core.command('SetPolicy', {
-              'revision': s['policy_revision'],
-              'dlc': dlc,
-            });
-            return result['accepted'] == true
-                ? null
-                : result['error']?.toString() ?? 'Your choices were not saved.';
-          },
-        ),
-      ),
-    );
+    final actions = actionsOf(s);
+    if (actions.contains('ViewPacks')) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => CollectionPage(status: s)),
+      );
+    } else if (actions.contains('SetPolicy')) {
+      packSheet(s);
+    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
-      child: ValueListenableBuilder<Map<String, dynamic>>(
-        valueListenable: widget.core.status,
-        builder: (context, s, _) {
-          final actions = List<String>.from(s['actions'] ?? []);
-          // A game is in use, or found installations are listed to choose from.
-          final located =
-              s['path'] != null || (s['candidates'] as List? ?? []).isNotEmpty;
-          final ready = s['ready'] == true;
-          final fixture = s['fixture'] == true;
-          final packs = List<Map<String, dynamic>>.from(s['packs'] ?? []);
-          final active = actions.contains('Pause');
-          // The user's own installation, read in place (no release feed).
-          final local = s['state'] == 'installed';
-          final review = packs.any(
-            (p) =>
-                p['status'] != 'not_installed' &&
-                p['status'] != '' &&
-                p['answered'] != true &&
-                p['deferred'] != true,
-          );
-          return LayoutBuilder(
-            builder: (context, constraints) => SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: constraints.maxWidth > 900 ? 64 : 32,
-                    vertical: 28,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: teal,
-                              borderRadius: BorderRadius.circular(13),
-                            ),
-                            child: const Icon(
-                              Icons.spa_outlined,
-                              color: Colors.white,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'PATCHER',
-                                  style: TextStyle(
-                                    color: ink,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 2,
-                                  ),
-                                ),
-                                Text(
-                                  'A little care for your game.',
-                                  style: TextStyle(color: muted, fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (fixture)
-                            const BadgeLabel(text: 'TEST INSTALLATION'),
-                          const SizedBox(width: 12),
-                          IconButton(
-                            tooltip: 'Settings',
-                            onPressed: () => settings(s),
-                            icon: const Icon(Icons.tune_rounded, color: ink),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 36),
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'THE SIMS 4',
-                              style: TextStyle(
-                                color: muted,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 2.3,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            ready
-                                ? Icons.check_circle_outline_rounded
-                                : Icons.circle_outlined,
-                            size: 15,
-                            color: ready ? teal : muted,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            ready
-                                ? 'Verified'
-                                : stateLabel(
-                                    s['state']?.toString() ?? 'checking',
-                                  ),
-                            style: const TextStyle(color: muted, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      Container(
-                        padding: const EdgeInsets.all(28),
-                        decoration: BoxDecoration(
-                          color: const Color(0xffe8eee6),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: const Color(0xffdce5da)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    s['title']?.toString() ??
-                                        'Finding your game',
-                                    style: const TextStyle(
-                                      color: ink,
-                                      fontSize: 38,
-                                      fontWeight: FontWeight.w500,
-                                      letterSpacing: -1.5,
-                                      height: 1.1,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Icon(
-                                  ready
-                                      ? Icons.task_alt_rounded
-                                      : active
-                                      ? Icons.autorenew_rounded
-                                      : Icons.games_outlined,
-                                  size: 42,
-                                  color: teal,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              s['detail']?.toString() ?? 'Checking saved locations and Steam libraries.',
-                              style: const TextStyle(
-                                color: muted,
-                                fontSize: 14,
-                                height: 1.6,
-                              ),
-                            ),
-                            if (active || working.contains(s['state'])) ...[
-                              const SizedBox(height: 24),
-                              ProgressView(core: widget.core),
-                            ],
-                            const SizedBox(height: 24),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                if (local && review)
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: () => openCollection(s),
-                                    icon: const Icon(Icons.grid_view_rounded),
-                                    label: const Text('Review packs'),
-                                  )
-                                else if (local && actions.contains('Launch'))
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: () => send('Launch'),
-                                    icon: const Icon(Icons.play_arrow_rounded),
-                                    label: const Text('Play'),
-                                  )
-                                else if (actions.contains('Resume'))
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: () => send('Resume'),
-                                    icon: const Icon(Icons.play_arrow_rounded),
-                                    label: const Text('Resume maintenance'),
-                                  )
-                                else if (actions.contains('Start'))
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: () => send('Start'),
-                                    icon: const Icon(
-                                      Icons.arrow_forward_rounded,
-                                    ),
-                                    label: const Text('Start maintenance'),
-                                  )
-                                else if (active)
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: () => send('Pause'),
-                                    icon: const Icon(Icons.pause_rounded),
-                                    label: const Text('Pause'),
-                                  )
-                                else if (ready)
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: actions.contains('Launch')
-                                        ? () => send('Launch')
-                                        : null,
-                                    icon: const Icon(Icons.play_arrow_rounded),
-                                    label: const Text('Play'),
-                                  )
-                                // The folder picker leads only when no installation was
-                                // found; otherwise the found game or the list is the choice.
-                                else if (actions.contains('ConfirmInstall') &&
-                                    !located)
-                                  FilledButton.icon(
-                                    key: const Key('primary-action'),
-                                    onPressed: chooseFolder,
-                                    icon: const Icon(
-                                      Icons.folder_open_outlined,
-                                    ),
-                                    label: const Text('Choose game folder'),
-                                  ),
-                                if (actions.contains('ConfirmInstall') &&
-                                    located)
-                                  TextButton.icon(
-                                    key: const Key('other-folder'),
-                                    onPressed: chooseFolder,
-                                    icon: const Icon(
-                                      Icons.folder_open_outlined,
-                                      size: 18,
-                                    ),
-                                    label: const Text('Use a different folder'),
-                                  ),
-                                if (local &&
-                                    review &&
-                                    actions.contains('Launch'))
-                                  OutlinedButton.icon(
-                                    key: const Key('play-action'),
-                                    onPressed: () => send('Launch'),
-                                    icon: const Icon(
-                                      Icons.play_arrow_rounded,
-                                      size: 18,
-                                    ),
-                                    label: const Text('Play'),
-                                  ),
-                                if (actions.contains('Verify'))
-                                  OutlinedButton.icon(
-                                    key: const Key('verify-action'),
-                                    onPressed: () => send('Verify'),
-                                    icon: const Icon(
-                                      Icons.verified_outlined,
-                                      size: 18,
-                                    ),
-                                    label: Text(
-                                      local ? 'Check files' : 'Verify files',
-                                    ),
-                                  ),
-                                if (actions.contains('AcceptCheck'))
-                                  TextButton.icon(
-                                    key: const Key('accept-check'),
-                                    onPressed: () => send('AcceptCheck'),
-                                    icon: const Icon(
-                                      Icons.done_all_rounded,
-                                      size: 18,
-                                    ),
-                                    label: const Text('Accept these changes'),
-                                  ),
-                                if (actions.contains('Cancel'))
-                                  TextButton(
-                                    key: const Key('stop-action'),
-                                    onPressed: () => send('Cancel'),
-                                    child: Text(
-                                      s['state'] == 'verifying'
-                                          ? 'Stop check'
-                                          : 'Stop for now',
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              s['next_action']?.toString() ?? '',
-                              style: const TextStyle(
-                                color: muted,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (s['path'] != null) ...[
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.folder_outlined,
-                              size: 16,
-                              color: muted,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                s['path'],
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: muted,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                      if ((s['candidates'] as List? ?? []).isNotEmpty &&
-                          s['path'] == null) ...[
-                        const SizedBox(height: 12),
-                        for (final candidate in s['candidates'])
-                          ListTile(
-                            leading: const Icon(Icons.folder_outlined),
-                            title: Text(candidate['path']),
-                            subtitle: Text(candidate['source']),
-                            trailing: const Icon(Icons.arrow_forward),
-                            onTap: () => send('ConfirmInstall', {
-                              'path': candidate['path'],
-                            }),
-                          ),
-                      ],
-                      const SizedBox(height: 28),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: InkWell(
-                              key: const Key('packs-action'),
-                              borderRadius: BorderRadius.circular(12),
-                              onTap: packs.isNotEmpty
-                                  ? () =>
-                                        local ? openCollection(s) : packSheet(s)
-                                  : null,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.grid_view_rounded,
-                                      color: teal,
-                                      size: 21,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          const Text(
-                                            'Your collection',
-                                            style: TextStyle(
-                                              color: ink,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          Text(
-                                            packs.isEmpty
-                                                ? 'Shown once your game is found'
-                                                : collectionSummary(packs),
-                                            style: const TextStyle(
-                                              color: muted,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (packs.isNotEmpty)
-                                      const Icon(
-                                        Icons.chevron_right,
-                                        color: muted,
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 24),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Icon(
-                                    Icons.cloud_outlined,
-                                    color: muted,
-                                    size: 21,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text(
-                                          'Online access',
-                                          style: TextStyle(
-                                            color: ink,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        Text(
-                                          s['online']?.toString() ??
-                                              'Checking availability',
-                                          style: const TextStyle(
-                                            color: muted,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      const Divider(),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () => setState(() => details = !details),
-                          icon: Icon(
-                            details ? Icons.expand_less : Icons.expand_more,
-                            size: 18,
-                          ),
-                          label: const Text('Details'),
-                        ),
-                      ),
-                      if (details)
-                        SelectionArea(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Text(
-                              [
-                                if (s['error'] != null) s['error'].toString(),
-                                if (fixture) 'This is a signed test release. No game content is included.',
-                                ...List<dynamic>.from(s['details'] ?? [])
-                                    .map((line) => line.toString()),
-                                if ((s['checked'] as List?)?.isNotEmpty ??
-                                    false) ...[
-                                  'Locations checked:',
-                                  ...List<dynamic>.from(s['checked'])
-                                      .map((p) => p.toString()),
-                                ],
-                              ].join('\n'),
-                              style: const TextStyle(
-                                color: muted,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
+      child: Select<Map<String, dynamic>>(
+        core: widget.core,
+        selector: (s) => {
+          for (final e in s.entries)
+            if (!progressKeys.contains(e.key)) e.key: e.value,
+        },
+        builder: (context, s) => LayoutBuilder(
+          builder: (context, box) {
+            homeBuilds++;
+            final wide = box.maxWidth > 900;
+            final side = wide ? space48 : space32;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(side, space16, side - 8, 0),
+                  child: header(s),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(side, space16, side, space24),
+                    child: centre(s),
                   ),
                 ),
-              ),
-            ),
-          );
-        },
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: box.maxHeight * .5),
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      color: surface,
+                      border: Border(top: BorderSide(color: line)),
+                    ),
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        side,
+                        space16,
+                        side,
+                        space16,
+                      ),
+                      child: bottom(s),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     ),
   );
+
+  Widget header(Map<String, dynamic> s) {
+    final update = s['app_update'];
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: teal,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Icon(Icons.spa_outlined, color: onTeal, size: 22),
+        ),
+        const SizedBox(width: space16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'The Sims 4',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: ink,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              StatusLabel(status: s),
+            ],
+          ),
+        ),
+        if (update != null)
+          Padding(
+            padding: const EdgeInsets.only(left: space8),
+            child: Tooltip(
+              message: 'Universal Patcher $update starts next time',
+              child: const Chip(
+                key: Key('update-ready'),
+                avatar: Icon(Icons.system_update_alt_rounded, size: 16),
+                label: Text('Update ready - restart to apply'),
+                backgroundColor: mint,
+                side: BorderSide.none,
+                labelStyle: TextStyle(color: ink, fontSize: 12),
+              ),
+            ),
+          ),
+        if (s['fixture'] == true)
+          const Padding(
+            padding: EdgeInsets.only(left: space8),
+            child: BadgeLabel(text: 'TEST INSTALLATION'),
+          ),
+        const SizedBox(width: space8),
+        IconButton(
+          tooltip: 'Settings',
+          onPressed: () => settings(s),
+          icon: const Icon(Icons.tune_rounded, color: ink),
+        ),
+      ],
+    );
+  }
+
+  Widget centre(Map<String, dynamic> s) {
+    final actions = actionsOf(s);
+    final primary = s['primary']?.toString();
+    final play = s['play']?.toString() ?? 'hidden';
+    final playVisible = play != 'hidden';
+    // Settings holds folder and search actions while a game is shown.
+    final inSettings = {
+      'Launch',
+      'SetPolicy',
+      'ViewPacks',
+      'CheckAppUpdate',
+      if (playVisible && s['state'] != 'confirm_location') ...[
+        'Discover',
+        'ConfirmInstall',
+      ],
+      // The bottom slot shows the leading action when there is no Play button.
+      if (!playVisible && primary != null) primary,
+    };
+    final beside = {'Pause', 'Resume', 'Cancel'};
+    final showProgress = s['show_progress'] == true;
+    final cardActions = actions
+        .where((a) => !inSettings.contains(a))
+        .where((a) => !(showProgress && beside.contains(a)))
+        .toList();
+    final candidates = List<Map<String, dynamic>>.from(
+      s['candidates'] ?? const [],
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(space24),
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(radiusMedium + 4),
+            border: Border.all(color: line),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AnimatedSwitcher(
+                duration: motion(context),
+                child: Text(
+                  s['title']?.toString() ?? 'Finding your game',
+                  key: ValueKey(s['title']),
+                  style: const TextStyle(
+                    color: ink,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -.8,
+                    height: 1.15,
+                  ),
+                ),
+              ),
+              const SizedBox(height: space8),
+              Select<String>(
+                core: widget.core,
+                selector: (s) => s['detail']?.toString() ?? '',
+                builder: (context, detail) => Text(
+                  detail,
+                  key: const Key('detail'),
+                  maxLines: showProgress ? 2 : null,
+                  overflow: showProgress ? TextOverflow.ellipsis : null,
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 15,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+              if (showProgress) ...[
+                const SizedBox(height: space16),
+                ProgressView(
+                  core: widget.core,
+                  controls: [
+                    for (final a in actions.where(beside.contains))
+                      a == 'Cancel'
+                          ? TextButton(
+                              key: Key('action-$a'),
+                              onPressed: () => run(a),
+                              child: Text(labelOf(s, a)),
+                            )
+                          : OutlinedButton.icon(
+                              key: Key('action-$a'),
+                              onPressed: () => run(a),
+                              icon: Icon(
+                                a == 'Pause'
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                size: 18,
+                              ),
+                              label: Text(labelOf(s, a)),
+                            ),
+                  ],
+                ),
+              ],
+              if (cardActions.isNotEmpty) ...[
+                const SizedBox(height: space16),
+                Wrap(
+                  spacing: space8,
+                  runSpacing: space8,
+                  children: [
+                    for (final a in cardActions)
+                      a == primary
+                          ? FilledButton(
+                              key: Key('action-$a'),
+                              onPressed: () => run(a),
+                              child: Text(labelOf(s, a)),
+                            )
+                          : OutlinedButton(
+                              key: Key('action-$a'),
+                              onPressed: () => run(a),
+                              child: Text(labelOf(s, a)),
+                            ),
+                  ],
+                ),
+              ],
+              if ((s['next_action']?.toString() ?? '').isNotEmpty) ...[
+                const SizedBox(height: space16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Icon(
+                        Icons.arrow_forward_rounded,
+                        size: 16,
+                        color: muted,
+                      ),
+                    ),
+                    const SizedBox(width: space8),
+                    Expanded(
+                      child: Text(
+                        s['next_action'].toString(),
+                        key: const Key('next-action'),
+                        style: const TextStyle(color: muted, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (s['path'] != null) ...[
+          const SizedBox(height: space16),
+          Row(
+            children: [
+              const Icon(Icons.folder_outlined, size: 16, color: muted),
+              const SizedBox(width: space8),
+              Expanded(
+                child: Text(
+                  s['path'].toString(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: muted, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (candidates.isNotEmpty && s['path'] == null) ...[
+          const SizedBox(height: space8),
+          for (final candidate in candidates)
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: Text(candidate['path'].toString()),
+              subtitle: Text(candidate['source'].toString()),
+              trailing: const Icon(Icons.arrow_forward_rounded),
+              onTap: () => send('ConfirmInstall', {'path': candidate['path']}),
+            ),
+        ],
+        const SizedBox(height: space16),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('details-toggle'),
+            onPressed: () => setState(() => details = !details),
+            icon: Icon(
+              details ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              size: 18,
+            ),
+            label: const Text('Details'),
+          ),
+        ),
+        if (details)
+          SelectionArea(
+            child: Padding(
+              padding: const EdgeInsets.all(space8),
+              child: Text(
+                [
+                  if (s['error'] != null) s['error'].toString(),
+                  ...List<dynamic>.from(s['details'] ?? const [])
+                      .map((line) => line.toString()),
+                  if ((s['checked'] as List?)?.isNotEmpty ?? false) ...[
+                    'Locations checked:',
+                    ...List<dynamic>.from(s['checked'])
+                        .map((p) => p.toString()),
+                  ],
+                ].join('\n').ifEmpty('Nothing to report yet.'),
+                style: const TextStyle(color: muted, fontSize: 12),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget bottom(Map<String, dynamic> s) {
+    final play = s['play']?.toString() ?? 'hidden';
+    final primary = s['primary']?.toString();
+    final actions = actionsOf(s);
+    final Widget lead;
+    if (play != 'hidden') {
+      lead = PlayButton(
+        state: playState(play),
+        reason: s['play_reason']?.toString(),
+        onPressed: () => send('Launch'),
+      );
+    } else if (primary != null && actions.contains(primary)) {
+      lead = FilledButton.icon(
+        key: const Key('primary-action'),
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(184, 56),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        onPressed: () => run(primary),
+        icon: Icon(switch (primary) {
+          'ConfirmInstall' => Icons.folder_open_outlined,
+          'Discover' => Icons.search_rounded,
+          'Resume' => Icons.play_arrow_rounded,
+          _ => Icons.arrow_forward_rounded,
+        }),
+        label: Text(labelOf(s, primary)),
+      );
+    } else {
+      lead = const SizedBox.shrink();
+    }
+    final collection = CollectionTile(
+      summary: s['collection']?.toString() ?? '',
+      onTap:
+          actions.contains('ViewPacks') ||
+              (actions.contains('SetPolicy') &&
+                  (s['packs'] as List? ?? const []).isNotEmpty)
+          ? () => openCollection(s)
+          : null,
+    );
+    final stacked = MediaQuery.textScalerOf(context).scale(16) > 22;
+    if (stacked) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          lead,
+          const SizedBox(height: space16),
+          collection,
+        ],
+      );
+    }
+    // The lead keeps one width in every state, so the pack summary never moves.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 360,
+          child: Align(alignment: Alignment.topLeft, child: lead),
+        ),
+        const SizedBox(width: space24),
+        Expanded(child: collection),
+      ],
+    );
+  }
+
   void settings(Map<String, dynamic> s) {
+    final actions = actionsOf(s);
     final saved = Map<String, dynamic>.from(s['preferences'] ?? const {});
     final languages = List<String>.from(s['languages'] ?? const []);
     String? language = s['language'] as String?;
-    // Download settings only mean something with a release feed.
-    final downloads = s['state'] != 'installed';
+    final downloads = s['downloads_supported'] == true;
+    final background = s['background_supported'] == true;
+    final canSave = actions.contains('SetPolicy');
     final prefs = <String, dynamic>{
       'future_packs': saved['future_packs'] == true,
       'background': saved['background'] == true,
       'metered': saved['metered'] == true,
       'bandwidth_bytes_per_second': saved['bandwidth_bytes_per_second'] ?? 0,
     };
+    final updateReason = unavailableOf(s, 'CheckAppUpdate');
+    final updateStatus = s['app_update_status']?.toString();
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
+      backgroundColor: surface,
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, update) => SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(32, 8, 32, 32),
+          padding: const EdgeInsets.fromLTRB(space32, space8, space32, space32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Your preferences',
+                'Settings',
                 style: TextStyle(fontSize: 26, color: ink),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: space16),
               if (languages.isNotEmpty) ...[
                 const Text('Game language', style: TextStyle(color: ink)),
-                const SizedBox(height: 8),
+                const SizedBox(height: space8),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: space8,
+                  runSpacing: space8,
                   children: [
                     for (final code in languages)
                       ChoiceChip(
                         key: Key('lang-$code'),
                         label: Text(languageName(code)),
                         selected: language == code,
-                        onSelected: (_) => update(() => language = code),
+                        onSelected: canSave
+                            ? (_) => update(() => language = code)
+                            : null,
                       ),
                   ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: space8),
                 const Text(
                   'Languages installed with your game. The choice is saved for when language switching is validated; your game is not changed yet.',
                   style: TextStyle(color: muted, fontSize: 12),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: space16),
               ],
               if (!downloads)
                 const ListTile(
@@ -682,17 +634,19 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                     'Available once game releases are published. Until then the patcher checks your own files only.',
                   ),
                 ),
-              if (downloads && s['background_supported'] != false)
+              if (downloads && background)
                 SwitchListTile(
                   key: const Key('pref-background'),
                   contentPadding: EdgeInsets.zero,
                   secondary: const Icon(Icons.schedule_outlined),
                   title: const Text('Maintain in the background'),
-                  subtitle: const Text(
-                    'Checks at login and every 6 hours. Files never change while the game is running.',
-                  ),
+                  subtitle: s['background_note'] == null
+                      ? null
+                      : Text(s['background_note'].toString()),
                   value: prefs['background'] as bool,
-                  onChanged: (v) => update(() => prefs['background'] = v),
+                  onChanged: canSave
+                      ? (v) => update(() => prefs['background'] = v)
+                      : null,
                 ),
               if (downloads) ...[
                 SwitchListTile(
@@ -704,7 +658,9 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                     'New packs download without asking. This uses more disk space and bandwidth.',
                   ),
                   value: prefs['future_packs'] as bool,
-                  onChanged: (v) => update(() => prefs['future_packs'] = v),
+                  onChanged: canSave
+                      ? (v) => update(() => prefs['future_packs'] = v)
+                      : null,
                 ),
                 SwitchListTile(
                   key: const Key('pref-metered'),
@@ -715,30 +671,35 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                     'Background downloads otherwise wait for an unmetered network.',
                   ),
                   value: prefs['metered'] as bool,
-                  onChanged: (v) => update(() => prefs['metered'] = v),
+                  onChanged: canSave
+                      ? (v) => update(() => prefs['metered'] = v)
+                      : null,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: space8),
                 const Text(
                   'Download speed limit',
                   style: TextStyle(color: ink),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: space8),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: space8,
+                  runSpacing: space8,
                   children: [
                     for (final (label, value) in bandwidthChoices)
                       ChoiceChip(
                         label: Text(label),
                         selected: prefs['bandwidth_bytes_per_second'] == value,
-                        onSelected: (_) => update(
-                          () => prefs['bandwidth_bytes_per_second'] = value,
-                        ),
+                        onSelected: canSave
+                            ? (_) => update(
+                                () =>
+                                    prefs['bandwidth_bytes_per_second'] = value,
+                              )
+                            : null,
                       ),
                   ],
                 ),
               ],
-              const SizedBox(height: 16),
+              const SizedBox(height: space16),
               const ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.person_outline),
@@ -747,40 +708,76 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                   'Unavailable until the sign-in handoff is verified.',
                 ),
               ),
-              const SizedBox(height: 12),
+              ListTile(
+                key: const Key('patcher-update'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.system_update_alt_rounded),
+                title: Text(
+                  s['app_update'] != null
+                      ? 'Update ready - restart to apply'
+                      : 'Patcher updates',
+                ),
+                subtitle: Text(
+                  updateStatus ?? updateReason ?? 'Checks for a newer patcher.',
+                ),
+                trailing: actions.contains('CheckAppUpdate')
+                    ? TextButton(
+                        key: const Key('action-CheckAppUpdate'),
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          send('CheckAppUpdate');
+                        },
+                        child: Text(labelOf(s, 'CheckAppUpdate')),
+                      )
+                    : null,
+              ),
+              const SizedBox(height: space16),
               Wrap(
-                spacing: 12,
-                runSpacing: 12,
+                spacing: space16,
+                runSpacing: space16,
                 children: [
-                  FilledButton(
-                    key: const Key('save-preferences'),
-                    onPressed: () {
-                      Navigator.pop(sheetContext);
-                      send('SetPolicy', {
-                        'revision': s['policy_revision'],
-                        if (downloads) 'preferences': prefs,
-                        if (languages.isNotEmpty) 'language': language,
-                      });
-                    },
-                    child: const Text('Save preferences'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(sheetContext);
-                      chooseFolder();
-                    },
-                    icon: const Icon(Icons.folder_open_outlined),
-                    label: const Text('Choose another installation'),
-                  ),
+                  if (canSave)
+                    FilledButton(
+                      key: const Key('save-preferences'),
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        send('SetPolicy', {
+                          'revision': s['policy_revision'],
+                          if (downloads) 'preferences': prefs,
+                          if (languages.isNotEmpty) 'language': language,
+                        });
+                      },
+                      child: Text(labelOf(s, 'SetPolicy')),
+                    ),
+                  if (actions.contains('ConfirmInstall'))
+                    OutlinedButton.icon(
+                      key: const Key('settings-ConfirmInstall'),
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        chooseFolder();
+                      },
+                      icon: const Icon(Icons.folder_open_outlined),
+                      label: Text(labelOf(s, 'ConfirmInstall')),
+                    ),
+                  if (actions.contains('Discover'))
+                    OutlinedButton.icon(
+                      key: const Key('settings-Discover'),
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        send('Discover');
+                      },
+                      icon: const Icon(Icons.search_rounded),
+                      label: Text(labelOf(s, 'Discover')),
+                    ),
                 ],
               ),
-              const SizedBox(height: 16),
-              Text(
-                s['fixture'] == true
-                    ? 'Test mode uses an independent local signing key and synthetic content.'
-                    : 'The patcher reads your game folder; it does not change game files.',
-                style: const TextStyle(color: muted, fontSize: 12),
-              ),
+              if ((s['mode_note']?.toString() ?? '').isNotEmpty) ...[
+                const SizedBox(height: space16),
+                Text(
+                  s['mode_note'].toString(),
+                  style: const TextStyle(color: muted, fontSize: 12),
+                ),
+              ],
             ],
           ),
         ),
@@ -788,9 +785,10 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
     );
   }
 
+  /// Pack choices for a release: only offered when the engine accepts them (SetPolicy).
   void packSheet(Map<String, dynamic> s) {
     final packs = List<Map<String, dynamic>>.from(s['packs']);
-    // Only answered packs start with a decision; new packs stay unanswered until touched.
+    // Only answered packs start with a decision; new packs stay undecided until touched.
     final selections = <String, bool>{
       for (final p in packs)
         if (p['answered'] == true) p['id']: p['selected'] == true,
@@ -799,36 +797,43 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
       for (final p in packs)
         if (p['deferred'] == true) p['id'] as String,
     };
-    bool isNew(Map<String, dynamic> p) =>
-        p['answered'] != true && p['deferred'] != true;
-    packs.sort((a, b) => (isNew(a) ? 0 : 1).compareTo(isNew(b) ? 0 : 1));
+    bool undecided(Map<String, dynamic> p) => p['undecided'] == true;
+    packs.sort(
+      (a, b) => (undecided(a) ? 0 : 1).compareTo(undecided(b) ? 0 : 1),
+    );
     String query = '';
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
+      backgroundColor: surface,
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, update) => SizedBox(
           height: MediaQuery.sizeOf(sheetContext).height * .8,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(32, 8, 32, 24),
+            padding: const EdgeInsets.fromLTRB(
+              space32,
+              space8,
+              space32,
+              space24,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Make it your collection',
+                  'Your packs',
                   style: TextStyle(
                     color: ink,
                     fontSize: 28,
                     letterSpacing: -.7,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: space8),
                 const Text(
                   'Choose once. The patcher remembers.',
                   style: TextStyle(color: muted),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: space16),
                 TextField(
                   decoration: const InputDecoration(
                     prefixIcon: Icon(Icons.search),
@@ -837,7 +842,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                   ),
                   onChanged: (text) => update(() => query = text.toLowerCase()),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: space16),
                 Expanded(
                   child: ListView(
                     children: [
@@ -869,10 +874,10 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: space16),
                 Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
+                  spacing: space16,
+                  runSpacing: space16,
                   children: [
                     FilledButton(
                       key: const Key('save-packs'),
@@ -887,7 +892,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                       child: const Text('Save selections'),
                     ),
                     if (packs.any(
-                      (p) => isNew(p) && !selections.containsKey(p['id']),
+                      (p) => undecided(p) && !selections.containsKey(p['id']),
                     ))
                       TextButton(
                         key: const Key('defer-packs'),
@@ -899,7 +904,7 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
                             'deferred': {
                               ...deferred,
                               for (final p in packs)
-                                if (isNew(p) &&
+                                if (undecided(p) &&
                                     !selections.containsKey(p['id']))
                                   p['id'] as String,
                             }.toList(),
@@ -918,41 +923,145 @@ class _HomeState extends State<Home> with SingleTickerProviderStateMixin {
   }
 }
 
-class ProgressView extends StatelessWidget {
-  const ProgressView({super.key, required this.core});
-  final Core core;
+/// The status beside the game name: an icon and a word, so it reads without colour.
+class StatusLabel extends StatelessWidget {
+  const StatusLabel({super.key, required this.status});
+  final Map<String, dynamic> status;
   @override
-  Widget build(BuildContext context) =>
-      ValueListenableBuilder<Map<String, dynamic>>(
-        valueListenable: core.progress,
-        builder: (context, p, _) {
-          final done = (p['bytes_done'] as num? ?? 0).toDouble(),
-              total = (p['bytes_total'] as num? ?? 0).toDouble();
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget build(BuildContext context) {
+    final text = status['status']?.toString() ?? '';
+    final play = status['play']?.toString();
+    final (IconData icon, Color color) = switch (text) {
+      'Playing' => (Icons.sports_esports_outlined, teal),
+      'Ready to play' || 'Ready' => (Icons.check_circle_outline_rounded, teal),
+      'Needs attention' => (Icons.error_outline_rounded, warning),
+      'Checking' ||
+      'Verifying' ||
+      'Downloading' ||
+      'Applying' ||
+      'Starting' => (Icons.sync_rounded, muted),
+      'Paused' || 'Stopped' => (Icons.pause_circle_outline_rounded, muted),
+      _ => (
+        play == 'starting'
+            ? Icons.sync_rounded
+            : Icons.radio_button_unchecked_rounded,
+        muted,
+      ),
+    };
+    return Row(
+      key: const Key('status-label'),
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: space4),
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: muted, fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The pack summary in the bottom slot; opens the pack list when the engine offers one.
+class CollectionTile extends StatelessWidget {
+  const CollectionTile({super.key, required this.summary, this.onTap});
+  final String summary;
+  final VoidCallback? onTap;
+  @override
+  Widget build(BuildContext context) => InkWell(
+    key: const Key('packs-action'),
+    borderRadius: BorderRadius.circular(radiusSmall + 4),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: space8, horizontal: space8),
+      child: Row(
+        children: [
+          Icon(
+            Icons.grid_view_rounded,
+            color: onTap == null ? muted : teal,
+            size: 20,
+          ),
+          const SizedBox(width: space16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Your packs',
+                  style: TextStyle(color: ink, fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  summary,
+                  key: const Key('collection-summary'),
+                  style: const TextStyle(color: muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          if (onTap != null)
+            const Icon(Icons.chevron_right_rounded, color: muted),
+        ],
+      ),
+    ),
+  );
+}
+
+class ProgressView extends StatelessWidget {
+  const ProgressView({super.key, required this.core, this.controls = const []});
+  final Core core;
+
+  /// Pause, Resume and Stop, kept beside the progress they control.
+  final List<Widget> controls;
+
+  @override
+  Widget build(BuildContext context) => Select<List<num>>(
+    core: core,
+    selector: (p) => [
+      p['bytes_done'] as num? ?? 0,
+      p['bytes_total'] as num? ?? 0,
+      p['bytes_per_second'] as num? ?? 0,
+      p['files_done'] as num? ?? 0,
+      p['files_total'] as num? ?? 0,
+    ],
+    builder: (context, p) {
+      final [done, total, rate, files, filesTotal] = p;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LinearProgressIndicator(
+            key: const Key('progress'),
+            value: total > 0 ? (done / total).clamp(0, 1).toDouble() : null,
+            minHeight: 6,
+            borderRadius: BorderRadius.circular(radiusSmall),
+            backgroundColor: mint,
+            color: teal,
+          ),
+          const SizedBox(height: space8),
+          Wrap(
+            spacing: space16,
+            runSpacing: space8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              LinearProgressIndicator(
-                value: total > 0 ? (done / total).clamp(0, 1) : null,
-                minHeight: 5,
-                borderRadius: BorderRadius.circular(8),
-                backgroundColor: const Color(0xffd6e1d5),
-                color: teal,
-              ),
-              const SizedBox(height: 10),
               Text(
                 [
-                  if ((p['files_total'] as num? ?? 0) > 0)
-                    '${p['files_done']} of ${p['files_total']} files',
+                  if (filesTotal > 0) '$files of $filesTotal files',
                   if (total > 0)
                     '${formatBytes(done)} of ${formatBytes(total)}',
-                  if (total > 0) '${formatBytes(p['bytes_per_second'] ?? 0)}/s',
-                ].join(' · ').ifEmpty('Checking local files'),
+                  if (total > 0 && rate > 0) '${formatBytes(rate)}/s',
+                ].join(' - ').ifEmpty('Starting'),
                 style: const TextStyle(color: muted, fontSize: 12),
               ),
+              ...controls,
             ],
-          );
-        },
+          ),
+        ],
       );
+    },
+  );
 }
 
 class BadgeLabel extends StatelessWidget {
@@ -960,10 +1069,10 @@ class BadgeLabel extends StatelessWidget {
   final String text;
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: space8, vertical: space4),
     decoration: BoxDecoration(
       border: Border.all(color: line),
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(radiusPill),
     ),
     child: Text(
       text,
@@ -977,21 +1086,6 @@ class BadgeLabel extends StatelessWidget {
   );
 }
 
-String stateLabel(String state) => switch (state) {
-  'needs_attention' => 'Needs attention',
-  'waiting' => 'Waiting for game to close',
-  'ready' => 'Ready',
-  'setup' => 'Setup',
-  'installed' => 'Installed',
-  'checking' => 'Checking',
-  'downloading' => 'Downloading',
-  'applying' => 'Applying',
-  'verifying' => 'Verifying',
-  'paused' => 'Paused',
-  'cancelled' => 'Stopped',
-  'planned' => 'Selections saved',
-  _ => state,
-};
 String formatBytes(num value) {
   if (value >= 1073741824) {
     return '${(value / 1073741824).toStringAsFixed(1)} GB';
@@ -1011,36 +1105,6 @@ const bandwidthChoices = [
   ('5 MB/s', 5242880),
   ('20 MB/s', 20971520),
 ];
-
-String collectionSummary(List<Map<String, dynamic>> packs) {
-  if (packs.any((p) => (p['status'] ?? '') != '')) {
-    final installed = packs.where((p) => p['status'] != 'not_installed').length;
-    final flagged = packs
-        .where((p) => p['status'] == 'incomplete' || p['status'] == 'changed')
-        .length;
-    return [
-      '$installed of ${packs.length} installed',
-      if (flagged > 0) '$flagged ${flagged == 1 ? 'needs' : 'need'} attention',
-    ].join(' · ');
-  }
-  final selected = packs.where((p) => p['selected'] == true).length;
-  final fresh = packs
-      .where((p) => p['answered'] != true && p['deferred'] != true)
-      .length;
-  final summary = '$selected of ${packs.length} packs selected';
-  if (fresh == 0) return summary;
-  return '$summary - $fresh new ${fresh == 1 ? 'pack' : 'packs'} to review';
-}
-
-/// States with work in progress, where progress is shown.
-const working = {
-  'verifying',
-  'downloading',
-  'applying',
-  'checking',
-  'paused',
-  'waiting',
-};
 
 String languageName(String code) => switch (code) {
   'ENG_US' => 'English',

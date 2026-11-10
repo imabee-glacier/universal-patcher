@@ -14,7 +14,9 @@ pub struct Check {
 }
 
 /// `operational` when every check passes, `unavailable` when the front itself does not answer,
-/// otherwise `degraded`.
+/// otherwise `degraded`. The checks cover only the download service: `/healthz`, both install
+/// scripts, `app/bootstrap/latest`, and the expiry of the patcher's signed metadata. The website
+/// words `operational` as "Download service reachable" for that reason.
 pub fn status(checks: &[Check]) -> &'static str {
     if checks.iter().all(|c| c.ok) {
         "operational"

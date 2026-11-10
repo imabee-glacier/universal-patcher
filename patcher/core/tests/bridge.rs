@@ -74,6 +74,20 @@ fn ui_commands_follow_the_engine_contract() {
             .iter()
             .any(|l| l == "Replaced EP01/content.package")
     );
+    // Play is decided here, not in the interface: a test installation has no game to start.
+    assert_eq!(ready["play"], "unavailable");
+    assert_eq!(
+        ready["play_reason"],
+        "Game launch is unavailable for a test installation."
+    );
+    assert_eq!(ready["labels"]["Verify"], "Verify files");
+    assert_eq!(ready["status"], "Ready");
+    assert!(
+        ready["collection"]
+            .as_str()
+            .unwrap()
+            .contains("packs selected")
+    );
     let revision = ready["policy_revision"].as_u64().unwrap();
 
     let stale = command(json!({"id":"1","command":"SetPolicy","revision":revision - 1,"dlc":{}}));

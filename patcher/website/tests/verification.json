@@ -1,9 +1,9 @@
 {
-  "checked_on": "2026-11-09",
-  "scope": "Local website source only. No patcher build or publication performed.",
+  "checked_on": "2026-11-10",
+  "scope": "Local website source only. No patcher build, deployment or publication performed.",
   "automated_tests": {
     "command": "npm test",
-    "passed": 10,
+    "passed": 19,
     "failed": 0,
     "environment": "Node 24.22.0, jsdom 26.1.0; DOM simulation, not a rendered browser"
   },
@@ -11,82 +11,91 @@
     {
       "path": "index.html",
       "http_status": 200,
-      "bytes": 13390,
-      "local_response_ms": 13.05
+      "bytes": 9909,
+      "local_response_ms": 2.59
     },
     {
       "path": "styles.css",
       "http_status": 200,
-      "bytes": 19600,
-      "local_response_ms": 2.19
+      "bytes": 12812,
+      "local_response_ms": 0.51
     },
     {
       "path": "app.js",
       "http_status": 200,
-      "bytes": 11301,
-      "local_response_ms": 2.91
+      "bytes": 12165,
+      "local_response_ms": 0.41
     },
     {
       "path": "i18n.js",
       "http_status": 200,
-      "bytes": 16587,
-      "local_response_ms": 1.71
+      "bytes": 14608,
+      "local_response_ms": 0.41
     },
     {
       "path": "assets/world.svg",
       "http_status": 200,
       "bytes": 8338,
-      "local_response_ms": 2.47
+      "local_response_ms": 0.4
     },
     {
       "path": "assets/mark.svg",
       "http_status": 200,
       "bytes": 215,
-      "local_response_ms": 1.58
+      "local_response_ms": 0.39
     },
     {
       "path": "data/catalog.json",
       "http_status": 200,
       "bytes": 94,
-      "local_response_ms": 2.14
+      "local_response_ms": 0.45
     },
     {
       "path": "data/health.json",
       "http_status": 200,
       "bytes": 63,
-      "local_response_ms": 1.8
+      "local_response_ms": 0.73
     }
   ],
-  "total_static_resource_bytes": 69588,
+  "total_static_resource_bytes": 58204,
   "contrast_ratios": {
-    "body_on_paper": 10.79,
-    "muted_on_paper": 5.36,
-    "white_on_teal_button": 6.38,
-    "secondary_on_dark": 7.59
+    "source": "design/tokens.json, computed by npm test (WCAG 2 relative luminance)",
+    "ink_on_paper": 12.54,
+    "ink_on_surface": 13.79,
+    "muted_on_paper": 5.63,
+    "muted_on_surface": 6.19,
+    "teal_on_paper": 5.75,
+    "teal_on_mint": 5.0,
+    "on_teal_on_teal": 6.38,
+    "on_teal_on_teal_hover": 8.22,
+    "mint_on_ink": 10.91,
+    "ink_on_line_disabled_button": 10.36,
+    "warning_on_paper": 5.34
   },
   "verified": [
     "Local assets and fragment links resolve",
-    "OS and architecture selection",
+    "OS and architecture selection; a Mac's processor is asked, never guessed",
     "Unavailable download gating",
-    "Fixture catalog rendering and filtering",
+    "Downloads read the `offered` field and still read `verified` from older catalogs; a catalog where the two disagree is not offered",
+    "Pack listings in a catalog are not shown",
     "Installation command copying and failure feedback",
     "Malformed catalog rejection",
-    "Stale health-check handling",
-    "SVG XML well-formedness",
-    "Translated catalog fixtures, dates, sizes, errors, and accessibility labels",
-    "Automatic language selection follows ordered browser locale preferences",
-    "Prior saved language overrides are ignored",
-    "Language selector and its header layout removed",
-    "Portuguese metadata, labels and empty states work with storage blocked"
+    "Health footer names the download service and its check time; stale checks claim nothing",
+    "The 0.1.0 note about updating itself is shown with a correction",
+    "Banned overclaim phrases are absent from rendered English and Portuguese text",
+    "styles.css custom properties equal design/tokens.json, and no other color or font family is declared",
+    "Text and background token pairs used by the stylesheet meet 4.5:1",
+    "Every text node on the page has a Portuguese translation",
+    "SVG XML well-formedness (xmllint)",
+    "Automatic language selection follows ordered browser locale preferences"
   ],
   "not_verified": [
-    "Rendered desktop and mobile layouts: browser access host unavailable",
+    "Rendered desktop and mobile layouts in a real browser after this change",
     "Keyboard and screen-reader behavior in a real browser",
     "Large-text and reduced-motion rendering",
     "Browser page load and public endpoint performance",
-    "Public installer links: no promoted installers configured",
-    "K3s deployment and catalog-publisher integration",
-    "Rendered Portuguese text layout: browser access host remains unavailable"
+    "Rendered Portuguese text layout",
+    "tools/browser/site-check.mjs was updated for the new status wording and the `offered` field, but not run in a browser"
   ],
-  "release_data": "Checked-in catalog is empty. Synthetic releases exist only in the test file. Replace data/catalog.json with promoted catalog output and data/health.json with timestamped health-check output before publication."
+  "release_data": "Checked-in catalog is empty. Synthetic releases exist only in the test file. The published catalog and health.json are written by `patcher publish-app` and `patcher health` on the host."
 }

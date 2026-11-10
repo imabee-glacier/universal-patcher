@@ -29,17 +29,99 @@ pub struct Progress {
     pub files_total: usize,
 }
 
-/// A durability boundary inside one file replacement, used to inject interruptions in tests.
+/// A point inside a run where tests stop it, as a crash would, or make one operation fail.
+/// The number paired with it in `RunOptions::interrupt` counts replacements for the replacement
+/// points, deletions for the deletion points, recovered operations for `AfterRecoveredCommit`,
+/// and is 1 for the completion points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Boundary {
+    /// The temporary output is written and flushed, before its hash is checked.
+    AfterTempSync,
+    /// The temporary output is verified, before the replacement intent is journaled.
+    BeforeIntent,
     AfterIntent,
+    /// Renamed over the destination, before the directory is flushed.
+    AfterRenameBeforeSync,
+    /// Renamed and the directory flushed, before the commit is journaled.
     AfterRename,
     AfterCommit,
+    AfterDeleteIntent,
+    /// Removed, before the directory is flushed.
+    AfterDelete,
+    /// Removed and the directory flushed, before the commit is journaled.
+    AfterDeleteSync,
+    AfterDeleteCommit,
+    /// A verified temporary output left by an earlier run was renamed into place and the
+    /// directory flushed, before the commit is journaled.
+    AfterRecoveredCommit,
+    /// Every selected file verified, before completion is journaled.
+    BeforeComplete,
+    /// Completion journaled, before the applied policy is saved.
+    AfterComplete,
+    /// Writing the temporary output fails partway, as on a full disk.
+    WriteFails,
+    /// Flushing the temporary output fails.
+    TempSyncFails,
+    /// Flushing the directory after a rename fails.
+    DirSyncFails,
+    /// Flushing the directory after a deletion fails.
+    DeleteSyncFails,
+}
+
+impl Boundary {
+    /// True for the points that make an operation fail rather than stop the run.
+    fn is_failure(self) -> bool {
+        matches!(
+            self,
+            Self::WriteFails | Self::TempSyncFails | Self::DirSyncFails | Self::DeleteSyncFails
+        )
+    }
+}
+
+/// An interruption injected by `RunOptions::interrupt`. It models a crash, so nothing is
+/// cleaned up on the way out.
+#[derive(Debug)]
+struct Injected(Boundary);
+
+impl std::fmt::Display for Injected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_failure() {
+            write!(f, "Injected failure at {:?}", self.0)
+        } else {
+            write!(f, "Injected interruption at {:?}", self.0)
+        }
+    }
+}
+
+/// Fails every write once `left` bytes have been accepted.
+struct FailingWriter<'a> {
+    inner: &'a mut dyn Write,
+    left: u64,
+}
+
+impl Write for FailingWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.left == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "Injected write failure",
+            ));
+        }
+        let n = buf
+            .len()
+            .min(usize::try_from(self.left).unwrap_or(usize::MAX));
+        let n = self.inner.write(&buf[..n])?;
+        self.left -= n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct RunOptions {
-    /// Stop with an error at this boundary of the nth replacement (1-based).
+    /// Stop with an error, or fail the operation, at this point of the nth operation (1-based).
     pub interrupt: Option<(Boundary, usize)>,
     /// Hash every selected file instead of trusting cached hashes.
     pub full_verify: bool,
@@ -196,34 +278,14 @@ fn busy(variant: &str) -> Result<()> {
     if variant == "fixture" {
         return Ok(());
     }
-    #[cfg(target_os = "linux")]
-    {
-        const PROCESSES: [&str; 5] = [
-            "ts4_x64.exe",
-            "ts4_dx9_x64.exe",
-            "ts4_launcher_x64.exe",
-            "eadesktop.exe",
-            "eabackgroundservice.exe",
-        ];
-        for entry in fs::read_dir("/proc")? {
-            let entry = entry?;
-            if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
-                continue;
-            }
-            if let Ok(cmd) = fs::read(entry.path().join("cmdline")) {
-                let cmd = String::from_utf8_lossy(&cmd).to_lowercase();
-                ensure!(
-                    !cmd.split('\0')
-                        .any(|arg| PROCESSES.iter().any(|p| arg.ends_with(p))),
-                    Blocker::GameRunning
-                );
-            }
+    match crate::process::detect() {
+        crate::process::Detection::Seen(activity) => {
+            ensure!(!activity.busy(), Blocker::GameRunning);
+            Ok(())
         }
-        Ok(())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        bail!("Native platform coordination is not yet validated")
+        crate::process::Detection::Unsupported(reason) => {
+            bail!("Files are not changed because running games cannot be detected: {reason}")
+        }
     }
 }
 
@@ -415,6 +477,22 @@ pub fn run(
     ensure!(compatible, Blocker::UnknownVersion);
 
     let selected = manifest.selected(&policy.desired)?;
+    let interrupt = |boundary: Boundary, n: usize| -> Result<()> {
+        if options.interrupt == Some((boundary, n)) {
+            bail!(Injected(boundary));
+        }
+        Ok(())
+    };
+    recover(
+        &mut journal,
+        &selected,
+        &roots,
+        &mut inventory,
+        &manifest.variant,
+        &mut report,
+        &interrupt,
+    )?;
+
     let mut plan = Vec::new();
     for (i, file) in selected.iter().enumerate() {
         control.check()?;
@@ -472,13 +550,13 @@ pub fn run(
         })?,
     }
 
-    let interrupt = |boundary: Boundary, n: usize| -> Result<()> {
-        if options.interrupt == Some((boundary, n)) {
-            bail!("Injected interruption at {boundary:?}");
-        }
-        Ok(())
-    };
     let cache = state.join("downloads");
+    // Objects consumed by an interrupted run, and objects for content no longer planned, are
+    // reclaimed; partial downloads of planned objects are kept for resumption.
+    reclaim(
+        &cache,
+        &plan.iter().map(|p| p.file.full.hash.as_str()).collect(),
+    )?;
     let mut done = 0;
     for (i, item) in plan.iter().enumerate() {
         control.check()?;
@@ -507,13 +585,7 @@ pub fn run(
             ".patcher-{}.tmp",
             blake3::hash(format!("{}:{}", release.digest(), f.id).as_bytes()).to_hex()
         );
-        match parent.remove_file(&tmp) {
-            Err(e) if !not_found(&e) => return Err(e.into()),
-            _ => {}
-        }
-        let mut output = parent
-            .open_with(&tmp, OpenOptions::new().write(true).create_new(true))?
-            .into_std();
+        remove_if_present(&parent, &tmp)?;
         progress(Progress {
             phase: "applying".into(),
             detail: f.path.clone(),
@@ -522,31 +594,64 @@ pub fn run(
             files_done: i,
             files_total: plan.len(),
         });
-        crate::transfer::decode(&object, &f.full, &mut output, control)?;
-        output.flush()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = if f.attributes.executable {
-                0o755
+        let prepared = (|| -> Result<()> {
+            let mut output = parent
+                .open_with(&tmp, OpenOptions::new().write(true).create_new(true))?
+                .into_std();
+            if options.interrupt == Some((Boundary::WriteFails, i + 1)) {
+                let mut failing = FailingWriter {
+                    inner: &mut output,
+                    left: f.target_size / 2,
+                };
+                crate::transfer::decode(&object, &f.full, &mut failing, control)?;
             } else {
-                0o644
-            };
-            output.set_permissions(fs::Permissions::from_mode(mode))?;
+                crate::transfer::decode(&object, &f.full, &mut output, control)?;
+            }
+            output.flush()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = if f.attributes.executable {
+                    0o755
+                } else {
+                    0o644
+                };
+                output.set_permissions(fs::Permissions::from_mode(mode))?;
+            }
+            interrupt(Boundary::TempSyncFails, i + 1)?;
+            output.sync_all()?;
+            drop(output);
+            interrupt(Boundary::AfterTempSync, i + 1)?;
+            ensure!(
+                storage::hash_reader(parent.open(&tmp)?)? == (f.target_hash.clone(), f.target_size),
+                "Decoded file hash mismatch"
+            );
+            interrupt(Boundary::BeforeIntent, i + 1)?;
+            Ok(())
+        })();
+        if let Err(e) = prepared {
+            // A crash leaves the output behind; an ordinary failure removes it. Either way the
+            // next run replaces it, because the name is fixed per release and file.
+            if !e
+                .downcast_ref::<Injected>()
+                .is_some_and(|b| !b.0.is_failure())
+            {
+                remove_if_present(&parent, &tmp)?;
+            }
+            return Err(e);
         }
-        output.sync_all()?;
-        drop(output);
-        ensure!(
-            storage::hash_reader(parent.open(&tmp)?)? == (f.target_hash.clone(), f.target_size),
-            "Decoded file hash mismatch"
-        );
         control.check()?;
         busy(&manifest.variant)?;
         ensure!(
             current(root)? == item.before,
             "Destination changed before commit"
         );
-        let operation = format!("replace:{}:{}", binding.policy_revision, f.id);
+        let operation = format!(
+            "replace:{}:{}:{}",
+            binding.policy_revision,
+            f.id,
+            journal.sequence()
+        );
         journal.append(Event::Intent {
             operation: operation.clone(),
             root_id: f.root_id.clone(),
@@ -557,16 +662,25 @@ pub fn run(
         })?;
         interrupt(Boundary::AfterIntent, i + 1)?;
         parent.rename(&tmp, &parent, &name)?;
-        sync(&parent)?;
         inventory.cache.forget(&key(&f.root_id, &f.path));
+        interrupt(Boundary::AfterRenameBeforeSync, i + 1)?;
+        interrupt(Boundary::DirSyncFails, i + 1)?;
+        sync(&parent)?;
         interrupt(Boundary::AfterRename, i + 1)?;
         journal.append(Event::Commit { operation })?;
         interrupt(Boundary::AfterCommit, i + 1)?;
-        fs::remove_file(object)?;
+        // Several files may share one object; it is reclaimed after its last use.
+        if !plan[i + 1..]
+            .iter()
+            .any(|p| p.file.full.hash == f.full.hash)
+        {
+            remove_path_if_present(&object)?;
+        }
         done += f.full.encoded_size;
         report.replaced.push(f.path.clone());
     }
 
+    let mut deletions = 0;
     for d in &manifest.deletions {
         control.check()?;
         busy(&manifest.variant)?;
@@ -578,7 +692,8 @@ pub fn run(
             report.preserved.push(d.path.clone());
             continue;
         }
-        let operation = format!("delete:{}:{}", d.root_id, d.path);
+        deletions += 1;
+        let operation = format!("delete:{}:{}:{}", d.root_id, d.path, journal.sequence());
         journal.append(Event::Intent {
             operation: operation.clone(),
             root_id: d.root_id.clone(),
@@ -587,11 +702,16 @@ pub fn run(
             target: None,
             temporary: None,
         })?;
+        interrupt(Boundary::AfterDeleteIntent, deletions)?;
         let (parent, name) = root.parent(&d.path)?;
         parent.remove_file(name)?;
-        sync(&parent)?;
         inventory.cache.forget(&key(&d.root_id, &d.path));
+        interrupt(Boundary::AfterDelete, deletions)?;
+        interrupt(Boundary::DeleteSyncFails, deletions)?;
+        sync(&parent)?;
+        interrupt(Boundary::AfterDeleteSync, deletions)?;
         journal.append(Event::Commit { operation })?;
+        interrupt(Boundary::AfterDeleteCommit, deletions)?;
         report.deleted.push(d.path.clone());
     }
 
@@ -609,9 +729,18 @@ pub fn run(
         ensure!(matches(f, actual.as_ref()), "Final verification failed");
     }
     inventory.cache.save(&cache_path)?;
+    let pending = journal.pending();
+    ensure!(
+        pending.is_empty(),
+        "{} journaled operations are unresolved",
+        pending.len()
+    );
+    reclaim(&cache, &BTreeSet::new())?;
+    interrupt(Boundary::BeforeComplete, 1)?;
     journal.append(Event::Complete {
         binding: binding.clone(),
     })?;
+    interrupt(Boundary::AfterComplete, 1)?;
     policy.applied = Some(Applied {
         revision: policy.revision,
         release: manifest.release_id.clone(),
@@ -631,4 +760,171 @@ pub fn run(
         files_total: selected.len(),
     });
     Ok(report)
+}
+
+fn remove_if_present(dir: &Dir, name: &str) -> Result<()> {
+    match dir.remove_file(name) {
+        Err(e) if !not_found(&e) => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
+fn remove_path_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Err(e) if !not_found(&e) => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Removes downloaded objects, partial downloads and resume validators whose object is not in
+/// `needed`. Only names this engine writes - a hash, optionally with `.part` or `.resume` -
+/// are touched.
+fn reclaim(downloads: &Path, needed: &BTreeSet<&str>) -> Result<()> {
+    let entries = match fs::read_dir(downloads) {
+        Err(e) if not_found(&e) => return Ok(()),
+        r => r?,
+    };
+    let mut removed = false;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let hash = name
+            .strip_suffix(".part")
+            .or_else(|| name.strip_suffix(".resume"))
+            .unwrap_or(name);
+        if crate::model::valid_hash(hash).is_err()
+            || needed.contains(hash)
+            || !entry.file_type()?.is_file()
+        {
+            continue;
+        }
+        remove_path_if_present(&entry.path())?;
+        removed = true;
+    }
+    if removed {
+        storage::sync_dir(downloads)?;
+    }
+    Ok(())
+}
+
+/// A temporary name this engine creates: `.patcher-<hash>.tmp`, in the destination directory.
+fn temporary_name(name: &str) -> bool {
+    name.strip_prefix(".patcher-")
+        .and_then(|n| n.strip_suffix(".tmp"))
+        .is_some_and(|h| crate::model::valid_hash(h).is_ok())
+}
+
+/// The hash, size and executable bit of a temporary output, if it is a regular file.
+fn inspect_temporary(dir: &Dir, name: &str) -> Result<Option<(String, u64, bool)>> {
+    match dir.symlink_metadata(name) {
+        Err(e) if not_found(&e) => return Ok(None),
+        Err(e) => return Err(e.into()),
+        Ok(m) if !m.is_file() => return Ok(None),
+        Ok(_) => {}
+    }
+    let file = dir.open(name)?.into_std();
+    let stamp = Stamp::of_file(&file)?;
+    let (hash, size) = storage::hash_reader(&file)?;
+    Ok(Some((hash, size, stamp.executable())))
+}
+
+/// Resolves every operation an earlier run journaled but did not finish, against the files on
+/// disk. A destination already holding the target completes the operation. A verified temporary
+/// output for a target the current release and selection still require is renamed into place
+/// if the destination still holds the content recorded before the operation. Anything else is
+/// abandoned: an invalid output is removed and the destination is left as found, to be planned
+/// again from its actual content.
+fn recover(
+    journal: &mut Journal,
+    selected: &[&GameFile],
+    roots: &BTreeMap<String, Root>,
+    inventory: &mut Inventory,
+    variant: &str,
+    report: &mut RunReport,
+    interrupt: &dyn Fn(Boundary, usize) -> Result<()>,
+) -> Result<()> {
+    let mut recovered = 0;
+    for op in journal.pending() {
+        let operation = op.operation.clone();
+        let Some(root) = roots.get(&op.root_id) else {
+            journal.append(Event::Abandon { operation })?;
+            continue;
+        };
+        let temporary = match &op.temporary {
+            Some(t) => {
+                ensure!(
+                    temporary_name(t),
+                    "Journal names an unexpected temporary file"
+                );
+                Some(t.as_str())
+            }
+            None => None,
+        };
+        let (parent, name) = root.parent(&op.path)?;
+        let current = root.hash(&op.path)?.map(|(hash, _)| hash);
+        inventory.cache.forget(&key(&op.root_id, &op.path));
+        let Some(target) = &op.target else {
+            // A deletion: done if the file is gone. Otherwise the deletion pass decides again.
+            if current.is_none() {
+                sync(&parent)?;
+                journal.append(Event::Commit { operation })?;
+            } else {
+                journal.append(Event::Abandon { operation })?;
+            }
+            continue;
+        };
+        if current.as_deref() == Some(target.as_str()) {
+            if let Some(t) = temporary {
+                remove_if_present(&parent, t)?;
+            }
+            // The rename may have been interrupted before its directory was flushed.
+            sync(&parent)?;
+            journal.append(Event::Commit { operation })?;
+            continue;
+        }
+        let wanted = selected
+            .iter()
+            .find(|f| f.root_id == op.root_id && f.path == op.path && f.target_hash == *target);
+        let output = match temporary {
+            Some(t) => inspect_temporary(&parent, t)?,
+            None => None,
+        };
+        let valid = match (wanted, &output) {
+            (Some(f), Some((hash, size, executable))) => {
+                *hash == f.target_hash
+                    && *size == f.target_size
+                    && (cfg!(not(unix)) || *executable == f.attributes.executable)
+            }
+            _ => false,
+        };
+        match temporary {
+            Some(t) if valid && current == op.before => {
+                busy(variant)?;
+                ensure!(
+                    root.hash(&op.path)?.map(|(hash, _)| hash) == op.before,
+                    "Destination changed before commit"
+                );
+                parent.rename(t, &parent, &name)?;
+                inventory.cache.forget(&key(&op.root_id, &op.path));
+                sync(&parent)?;
+                recovered += 1;
+                interrupt(Boundary::AfterRecoveredCommit, recovered)?;
+                journal.append(Event::Commit { operation })?;
+                report.replaced.push(op.path.clone());
+            }
+            _ => {
+                if let Some(t) = temporary
+                    && output.is_some()
+                {
+                    remove_if_present(&parent, t)?;
+                    sync(&parent)?;
+                }
+                journal.append(Event::Abandon { operation })?;
+            }
+        }
+    }
+    Ok(())
 }

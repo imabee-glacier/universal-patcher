@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use serde::Serialize;
 use std::{
     collections::BTreeSet,
@@ -89,6 +89,8 @@ pub struct Probe {
     pub steam_roots: Vec<PathBuf>,
     /// Game directories checked directly, such as the EA app's default location.
     pub direct: Vec<PathBuf>,
+    /// Folders whose application bundles are checked for the Mac game's bundle identifier.
+    pub mac_applications: Vec<PathBuf>,
     pub variant: &'static str,
 }
 
@@ -109,6 +111,11 @@ impl Probe {
         Self {
             steam_roots: roots.iter().map(|r| join(home, r)).collect(),
             direct: Vec::new(),
+            mac_applications: if macos {
+                vec![PathBuf::from("/Applications"), home.join("Applications")]
+            } else {
+                Vec::new()
+            },
             variant: if macos {
                 "macos-native"
             } else {
@@ -133,6 +140,7 @@ impl Probe {
         Self {
             steam_roots,
             direct,
+            mac_applications: Vec::new(),
             variant: "windows-native",
         }
     }
@@ -303,6 +311,16 @@ mod windows {
 }
 
 pub fn validate(path: &Path, source: &str, variant: &str) -> Result<Candidate> {
+    if join(path, "Contents/Info.plist").is_file() {
+        return match mac_bundle(path) {
+            Bundle::Game(c) => Ok(Candidate {
+                source: source.into(),
+                ..c
+            }),
+            Bundle::Unresolved(u) => bail!("{}", u.reason),
+            Bundle::Other => bail!("Application bundle is not The Sims 4"),
+        };
+    }
     ensure!(
         join(path, "Data/Client/ClientFullBuild0.package").is_file(),
         "Base-game data marker not found"
@@ -319,6 +337,166 @@ pub fn validate(path: &Path, source: &str, variant: &str) -> Result<Candidate> {
         maintenance_supported: false,
     })
 }
+
+/// The bundle identifier of the native Mac game.
+pub const MAC_BUNDLE_ID: &str = "com.ea.mac.thesims4";
+
+/// Why a native Mac installation is found but not maintained.
+pub const MAC_UNVERIFIED: &str = "Native Mac maintenance is unverified: no Mac installation has \
+    been examined, so its files, packs and versions cannot yet be checked or repaired";
+
+impl Candidate {
+    /// Why this installation cannot be maintained, or `None` when it can.
+    pub fn unsupported_reason(&self) -> Option<&'static str> {
+        if self.maintenance_supported {
+            None
+        } else if self.variant == "macos-native" {
+            Some(MAC_UNVERIFIED)
+        } else {
+            Some("File maintenance is not yet validated for this installation")
+        }
+    }
+}
+
+/// An application bundle whose identity could not be read.
+#[derive(Debug, Clone, Serialize)]
+pub struct Unresolved {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+/// What one application bundle turned out to be.
+#[derive(Debug, Clone)]
+pub enum Bundle {
+    Game(Candidate),
+    Unresolved(Unresolved),
+    Other,
+}
+
+/// Info.plist files larger than this are not read.
+const MAX_PLIST: u64 = 1024 * 1024;
+
+/// Checks one `.app` bundle's `Contents/Info.plist` for the Mac game's bundle identifier. Only
+/// XML property lists are read; a binary one is reported as unresolved.
+pub fn mac_bundle(bundle: &Path) -> Bundle {
+    let unresolved = |reason: &str| {
+        Bundle::Unresolved(Unresolved {
+            path: bundle.to_path_buf(),
+            reason: reason.into(),
+        })
+    };
+    let plist = join(bundle, "Contents/Info.plist");
+    match fs::metadata(&plist) {
+        Ok(m) if m.is_file() && m.len() <= MAX_PLIST => {}
+        Ok(m) if m.is_file() => return unresolved("Info.plist is too large to read"),
+        Ok(_) => return unresolved("Info.plist is not a file"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Bundle::Other,
+        Err(_) => return unresolved("Info.plist cannot be read"),
+    }
+    let Ok(bytes) = fs::read(&plist) else {
+        return unresolved("Info.plist cannot be read");
+    };
+    if bytes.starts_with(b"bplist") {
+        return unresolved("Info.plist is a binary property list, which this version cannot read");
+    }
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return unresolved("Info.plist is not UTF-8 text");
+    };
+    if bundle_identifier(text).as_deref() != Some(MAC_BUNDLE_ID) {
+        return Bundle::Other;
+    }
+    let (Ok(path), Ok(identity)) = (fs::canonicalize(bundle), crate::engine::identity(bundle))
+    else {
+        return unresolved("Application bundle cannot be opened");
+    };
+    Bundle::Game(Candidate {
+        path,
+        identity,
+        variant: "macos-native".into(),
+        source: "Mac application".into(),
+        maintenance_supported: false,
+    })
+}
+
+/// Every Mac game bundle in `folders`, the bundles whose identity could not be read, and the
+/// folders checked. Only `.app` entries directly inside each folder are examined.
+pub fn mac_bundles(folders: &[PathBuf]) -> (Vec<Candidate>, Vec<Unresolved>, Vec<PathBuf>) {
+    let (mut found, mut unresolved, mut checked) = (Vec::new(), Vec::new(), Vec::new());
+    for folder in unique(folders.to_vec()) {
+        checked.push(folder.clone());
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        let mut bundles: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("app")) && p.is_dir())
+            .collect();
+        bundles.sort();
+        for bundle in bundles {
+            match mac_bundle(&bundle) {
+                Bundle::Game(c) => found.push(c),
+                Bundle::Unresolved(u) => unresolved.push(u),
+                Bundle::Other => {}
+            }
+        }
+    }
+    (found, unresolved, checked)
+}
+
+/// The `CFBundleIdentifier` string of the top-level dictionary of an XML property list.
+fn bundle_identifier(xml: &str) -> Option<String> {
+    let mut depth = 0usize;
+    let mut wanted = false;
+    let mut rest = xml;
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start..];
+        if let Some(comment) = rest.strip_prefix("<!--") {
+            rest = &comment[comment.find("-->")? + 3..];
+            continue;
+        }
+        let end = rest.find('>')?;
+        let tag = &rest[1..end];
+        rest = &rest[end + 1..];
+        if tag.starts_with(['?', '!']) {
+            continue;
+        }
+        let closing = tag.starts_with('/');
+        let empty = tag.ends_with('/');
+        let name = tag
+            .trim_matches('/')
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or("");
+        match (name, closing, empty) {
+            ("dict" | "array", false, false) => {
+                depth += 1;
+                wanted = false;
+            }
+            ("dict" | "array", true, _) => depth = depth.checked_sub(1)?,
+            ("key", false, false) => {
+                let close = rest.find("</key>")?;
+                wanted = depth == 1 && unescape(&rest[..close]) == "CFBundleIdentifier";
+                rest = &rest[close + "</key>".len()..];
+            }
+            ("string", false, false) if wanted => {
+                let close = rest.find("</string>")?;
+                return Some(unescape(&rest[..close]).trim().to_owned());
+            }
+            (_, false, _) => wanted = false,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn unescape(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
 pub fn discover(probe: &Probe, saved: Option<&Path>) -> Discovery {
     let mut result = Discovery {
         candidates: Vec::new(),
@@ -352,6 +530,13 @@ pub fn discover(probe: &Probe, saved: Option<&Path>) -> Discovery {
         if let Ok(c) = validate(&game, source, probe.variant)
             && identities.insert(c.identity.clone())
         {
+            result.candidates.push(c);
+        }
+    }
+    let (bundles, _, checked) = mac_bundles(&probe.mac_applications);
+    result.checked.extend(checked);
+    for c in bundles {
+        if identities.insert(c.identity.clone()) {
             result.candidates.push(c);
         }
     }
@@ -423,6 +608,38 @@ mod tests {
             assert_eq!(kept, vec![a]);
         } else {
             assert_eq!(kept.len(), 3, "other systems compare paths exactly");
+        }
+    }
+
+    #[test]
+    fn bundle_identifier_comes_from_the_top_level_dictionary() {
+        let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDocumentTypes</key>
+    <array><dict><key>CFBundleIdentifier</key><string>nested.value</string></dict></array>
+    <key>Unrelated</key><true/>
+    <!-- <key>CFBundleIdentifier</key><string>commented.out</string> -->
+    <key>CFBundleIdentifier</key>
+    <string> com.ea.mac.thesims4 </string>
+</dict>
+</plist>"#;
+        assert_eq!(bundle_identifier(plist).as_deref(), Some(MAC_BUNDLE_ID));
+        let escaped =
+            "<plist><dict><key>CFBundleIdentifier</key><string>a&amp;b</string></dict></plist>";
+        assert_eq!(bundle_identifier(escaped).as_deref(), Some("a&b"));
+        // A key followed by something other than a string has no identifier value.
+        let other =
+            "<plist><dict><key>CFBundleIdentifier</key><true/><string>x</string></dict></plist>";
+        assert_eq!(bundle_identifier(other), None);
+        for broken in [
+            "",
+            "<plist><dict><key>CFBundleIdentifier",
+            "</dict></dict>",
+            "<!-- open",
+        ] {
+            assert_eq!(bundle_identifier(broken), None, "{broken:?}");
         }
     }
 

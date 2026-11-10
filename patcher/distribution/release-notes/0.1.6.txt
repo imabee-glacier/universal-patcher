@@ -1,0 +1,13 @@
+Play: one button starts the game wherever it came from, a store or a plain folder. On Windows it starts the game program itself. On Linux a copy in a Steam library starts through Steam, and any other copy starts through Wine. The button shows Starting and then Playing while the game runs, and returns when you close it. When nothing on the computer can start the game, the button is greyed out and says why.
+
+Removed: the file check that compared your game with an earlier recording of it. It was not part of what this program is for.
+
+Your saved choices are kept when the game folder is moved or recreated. The pack list on your own installation shows what is installed, incomplete or not installed; it no longer suggests that ticking a pack downloads or removes it.
+
+Correction to the 0.1.0 notes: the patcher does not update on its own. To get a new version, open Settings and choose Check for patcher update, or run universal-patcher update in a terminal; the new version starts the next time you open the patcher.
+
+The website now describes only what Universal Patcher does today: it finds The Sims 4 on your computer, lists your packs with their status and size, and starts the game. It does not download, update or unlock the game or its packs.
+
+The website no longer calls a download "verified". It says which systems an installer is available for, and that the Windows installer is not code-signed yet, so Windows may warn about an unknown publisher.
+
+The status line at the bottom of the website now says what it checks: whether the download service answered, and when it was checked.

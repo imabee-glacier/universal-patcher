@@ -320,3 +320,24 @@ fn plain_http_is_refused_for_remote_origins() {
             .is_err()
     );
 }
+
+#[test]
+fn partial_response_for_an_empty_object_is_rejected_without_panicking() {
+    let o = object(&[]);
+    let fake = serve(|_, _| {
+        Response::from_data(vec![])
+            .with_status_code(206)
+            .with_header(header("Content-Range", "bytes */0"))
+    });
+    let t = tempfile::tempdir().unwrap();
+    assert!(fetch(&source(&fake), &o, t.path()).is_err());
+    assert_eq!(fake.ranges.lock().unwrap().len(), 4, "bounded retries");
+    assert!(!t.path().join(&o.hash).exists());
+
+    let fake = serve(|_, _| full(&[], "\"v1\""));
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(
+        fetch(&source(&fake), &o, t.path()).unwrap(),
+        Vec::<u8>::new()
+    );
+}

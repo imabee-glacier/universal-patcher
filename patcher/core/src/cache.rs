@@ -118,7 +118,10 @@ impl HashCache {
     pub fn lookup(&self, key: &str, stamp: &Stamp, now: i64) -> Option<&str> {
         self.entries
             .get(key)
-            .filter(|e| &e.stamp == stamp && now.saturating_sub(e.verified_at) < MAX_AGE_SECONDS)
+            .filter(|e| {
+                let age = now.saturating_sub(e.verified_at);
+                &e.stamp == stamp && (0..MAX_AGE_SECONDS).contains(&age)
+            })
             .map(|e| e.hash.as_str())
     }
 
@@ -139,5 +142,44 @@ impl HashCache {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         atomic_write(path, &checked_bytes(self)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stamp() -> Stamp {
+        Stamp {
+            size: 1,
+            modified_ns: 2,
+            changed_ns: 3,
+            inode: 4,
+            device: 5,
+            mode: 0o644,
+        }
+    }
+
+    #[test]
+    fn cached_hash_expires_after_the_maximum_age() {
+        let mut cache = HashCache::empty("install");
+        cache.record("game/a".into(), stamp(), "h".into(), 1_000);
+        assert_eq!(cache.lookup("game/a", &stamp(), 1_000), Some("h"));
+        assert_eq!(
+            cache.lookup("game/a", &stamp(), 1_000 + MAX_AGE_SECONDS - 1),
+            Some("h")
+        );
+        assert_eq!(
+            cache.lookup("game/a", &stamp(), 1_000 + MAX_AGE_SECONDS),
+            None
+        );
+    }
+
+    #[test]
+    fn hash_recorded_in_the_future_is_not_trusted() {
+        // Recorded under a clock that was later set back: its age cannot be known.
+        let mut cache = HashCache::empty("install");
+        cache.record("game/a".into(), stamp(), "h".into(), 10 * MAX_AGE_SECONDS);
+        assert_eq!(cache.lookup("game/a", &stamp(), 1_000), None);
     }
 }

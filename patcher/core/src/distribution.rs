@@ -223,8 +223,9 @@ fn copy_tree_immutable(staged: &Path, live: &Path) -> Result<()> {
 /// What the website shows for a release, beyond the signed builds themselves.
 #[derive(Debug, Default, Clone)]
 pub struct Listing {
-    /// Platforms (`<os>-<arch>`) offered to users as verified downloads. Other packaged
-    /// platforms are listed as not verified, and the website offers no download for them.
+    /// Platforms (`<os>-<arch>`) the website offers for download, from `distribution/offer`.
+    /// Other packaged platforms are listed with `offered: false`, and the website offers no
+    /// download for them. Being offered records a release decision, not a test result.
     pub offered: Vec<String>,
     /// Release notes, one paragraph per entry.
     pub notes: Vec<String>,
@@ -279,7 +280,7 @@ fn catalog(
         downloads.push(json!({
             "os": m.os,
             "arch": website_arch(&m.arch)?,
-            "verified": listing.offered.contains(&platform),
+            "offered": listing.offered.contains(&platform),
             "version": version,
             "url": url,
             "install_script": format!("{origin}{script}"),

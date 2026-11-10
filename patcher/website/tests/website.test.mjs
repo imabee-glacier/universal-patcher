@@ -10,7 +10,7 @@ const source = translations + '\n' + (await readFile(new URL('app.js', root), 'u
 const empty = JSON.parse(await readFile(new URL('data/catalog.json', root), 'utf8'));
 const fixture = {
   schema: 1, published_at: '2026-11-09T12:00:00Z',
-  downloads: [{ os: 'linux', arch: 'x86_64', verified: true, version: 'test-1', url: 'https://downloads.example.test/linux.tar.gz', install_script: 'https://downloads.example.test/install.sh' }],
+  downloads: [{ os: 'linux', arch: 'x86_64', offered: true, version: 'test-1', url: 'https://downloads.example.test/linux.tar.gz', install_script: 'https://downloads.example.test/install.sh' }],
   packs: [
     { id: 'test-expansion', name: 'Fixture expansion', kind: 'expansion', platforms: ['linux'], download_size: 1073741824 },
     { id: 'test-kit', name: '<img src=x onerror=alert(1)>', kind: 'kit', platforms: ['linux'], download_size: 4096 },
@@ -61,12 +61,12 @@ test('unpublished catalog never exposes a download or installer command for any 
     assert.equal(v.$('#download-link').hasAttribute('href'), false);
     assert.equal(v.$('#download-unavailable').disabled, true);
     assert.equal(v.$('#install-command').hidden, true);
-    assert.match(v.$('#download-reason').textContent, /No verified public installer/);
+    assert.match(v.$('#download-reason').textContent, /No installer is offered for this system yet/);
   }
   assert.match(v.$('#service-status').textContent, /unknown/);
   v.dom.window.close();
 });
-test('verified catalog drives downloads, commands, pack filtering, and release notes', async () => {
+test('offered catalog drives downloads, commands, and release notes; packs are never shown', async () => {
   let copied;
   const v = await mount({ catalog: fixture, clipboard: { writeText: async value => { copied = value; } } });
   selectPlatform(v);
@@ -77,14 +77,9 @@ test('verified catalog drives downloads, commands, pack filtering, and release n
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(copied, "curl -fsSL 'https://downloads.example.test/install.sh' | bash");
   assert.match(v.$('#copy-status').textContent, /copied/);
-  assert.equal(v.all('.pack-card').length, 2);
-  assert.equal(v.$('.pack-card img'), null, 'catalog text must not execute as HTML');
-  v.$('[data-filter="stuff"]').click();
-  assert.equal(v.all('.pack-card').length, 1);
-  assert.equal(v.$('[data-filter="stuff"]').getAttribute('aria-pressed'), 'true');
-  v.$('#pack-search').value = 'no match';
-  v.$('#pack-search').dispatchEvent(new v.dom.window.Event('input'));
-  assert.match(v.$('#pack-results').textContent, /No packs match/);
+  assert.match(v.$('#download-reason').textContent, /Available for Linux \(x64\)/);
+  assert.equal(v.$('img[src="x"]'), null, 'catalog text must not execute as HTML');
+  assert.doesNotMatch(v.doc.body.textContent, /Fixture expansion/, 'this site lists no game content');
   assert.match(v.$('#release-notes').textContent, /Fixture release note/);
   selectPlatform(v, 'macos');
   assert.equal(v.$('#download-link').hasAttribute('href'), false, 'old URL removed on unsupported selection');
@@ -107,7 +102,7 @@ test('catalog failure and invalid URLs fail closed', async () => {
     selectPlatform(v);
     assert.equal(v.$('#download-link').hasAttribute('href'), false);
     assert.match(v.$('#download-state').textContent, /unavailable/);
-    assert.match(v.$('#pack-results').textContent, /could not be loaded/);
+    assert.match(v.$('#release-notes').textContent, /unavailable/);
     v.dom.window.close();
   }
 });
@@ -121,7 +116,7 @@ test('Windows and Linux need no architecture: a detected Linux shows its downloa
   assert.match(v.$('#download-state').textContent, /Linux · x64/);
   v.$('[data-os="windows"]').click();
   assert.equal(v.$('.architecture').hidden, true);
-  assert.equal(v.$('#unavailable-label').textContent, 'Download not yet available');
+  assert.equal(v.$('#unavailable-label').textContent, 'Not available for this system');
   v.dom.window.close();
 });
 test('only a Mac is asked for its processor, and a reported one is preselected', async () => {
@@ -134,7 +129,7 @@ test('only a Mac is asked for its processor, and a reported one is preselected',
   const reported = await mount({ catalog: fixture, platform: 'macOS', hints: { architecture: 'arm', bitness: '64' } });
   assert.equal(reported.$('#architecture').value, 'aarch64');
   assert.match(reported.$('#platform-hint').textContent, /macOS · Apple silicon detected/);
-  assert.equal(reported.$('#unavailable-label').textContent, 'Download not yet available');
+  assert.equal(reported.$('#unavailable-label').textContent, 'Not available for this system');
   reported.dom.window.close();
   const none = await mount({ catalog: fixture });
   assert.equal(none.$('#unavailable-label').textContent, 'Choose your system first');
@@ -147,8 +142,8 @@ test('a 32-bit or unknown report leaves the Mac choice to the visitor', async ()
     v.dom.window.close();
   }
 });
-test('health is separate, timestamped, and stale checks cannot claim operational status', async () => {
-  for (const [age, expected] of [[0, /Services operational/], [3600000, /Status unknown.*stale/]]) {
+test('health names the download service, is timestamped, and stale checks claim nothing', async () => {
+  for (const [age, expected] of [[0, /^Download service reachable/], [3600000, /Download service status unknown.*stale/]]) {
     const v = await mount({ health: { schema: 1, status: 'operational', checked_at: new Date(Date.now() - age).toISOString() } });
     assert.match(v.$('#service-status').textContent, expected);
     assert.match(v.$('#service-status').textContent, /Checked/);
@@ -173,7 +168,7 @@ test('browser region selects language automatically without a selector or saved 
     assert.equal(v.doc.documentElement.lang, expected);
     assert.equal(v.$('#site-language'), null);
     assert.equal(v.$('.language-picker'), null);
-    assert.match(v.$('h1').textContent, expected === 'en' ? /More life/ : /Mais vida/);
+    assert.match(v.$('h1').textContent, expected === 'en' ? /See your Sims 4 packs/ : /Veja seus pacotes/);
     assert.equal(v.$('.header > .button').getAttribute('href'), '#download');
     v.dom.window.close();
   }
@@ -181,36 +176,145 @@ test('browser region selects language automatically without a selector or saved 
 test('automatic Portuguese translates metadata, accessibility labels and empty states without storage', async () => {
   const v = await mount({ languages: ['pt-BR'], blockedStorage: true });
   assert.equal(v.doc.documentElement.lang, 'pt-BR');
-  assert.match(v.doc.title, /Mais vida/);
-  assert.equal(v.$('#pack-search').getAttribute('aria-label'), 'Buscar pacotes publicados');
-  assert.match(v.$('#pack-results').textContent, /Uma nova coleção vem aí/);
-  assert.match(v.$('#release-notes').textContent, /O primeiro capítulo/);
+  assert.match(v.doc.title, /Universal Patcher para The Sims 4/);
+  assert.equal(v.$('#copy-command').getAttribute('aria-label'), 'Copiar comando de instalação');
+  assert.match(v.$('#release-notes').textContent, /Ainda não há novidades/);
   selectPlatform(v);
-  assert.match(v.$('#download-reason').textContent, /Ainda não há um instalador/);
+  assert.match(v.$('#download-reason').textContent, /Ainda não há instalador oferecido/);
   v.dom.window.close();
 });
-test('Portuguese handles errors, copy feedback, localized catalog content, dates and sizes', async () => {
+test('Portuguese handles errors, copy feedback, localized release notes and dates', async () => {
   const catalog = structuredClone(fixture);
-  catalog.packs[0].translations = { 'pt-BR': { name: 'Expansão de teste' } };
   catalog.releases[0].translations = { 'pt-BR': { notes: ['Novidade de teste.'] } };
-  catalog.packs[0].download_size = 1610612736;
   const v = await mount({ catalog, languages: ['pt-BR'], clipboard: { writeText: async () => {} }, health: { schema: 1, status: 'operational', checked_at: new Date().toISOString() } });
   selectPlatform(v);
-  assert.match(v.$('#pack-results').textContent, /Expansão de teste/);
-  assert.match(v.$('#pack-results').textContent, /1,5 GB/);
+  assert.match(v.$('#download-reason').textContent, /Disponível para Linux \(x64\)/);
   assert.match(v.$('#release-notes').textContent, /Novidade de teste/);
   assert.match(v.$('#release-notes').textContent, /nov/);
-  assert.match(v.$('#service-status').textContent, /Serviços funcionando.*Verificado em/);
+  assert.match(v.$('#service-status').textContent, /Serviço de download acessível.*Verificado em/);
   v.$('#copy-command').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.match(v.$('#copy-status').textContent, /Comando de instalação copiado/);
-  v.$('#pack-search').value = 'expansão';
-  v.$('#pack-search').dispatchEvent(new v.dom.window.Event('input'));
-  assert.equal(v.all('.pack-card').length, 1);
   v.dom.window.close();
   const failed = await mount({ fail: true, languages: ['pt-BR'] });
   assert.match(failed.$('#download-state').textContent, /indisponíveis/);
-  assert.match(failed.$('#pack-results').textContent, /Não foi possível carregar/);
   assert.match(failed.$('#release-notes').textContent, /indisponíveis/);
   failed.dom.window.close();
+});
+
+const tokens = JSON.parse(await readFile(new URL('../design/tokens.json', root), 'utf8'));
+const css = await readFile(new URL('styles.css', root), 'utf8');
+const cssVars = Object.fromEntries([...css.match(/:root\s*\{[^}]*\}/)[0].matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()]));
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(c => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a, b) {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+
+test('styles.css custom properties mirror design/tokens.json', () => {
+  for (const [name, value] of Object.entries(tokens.color)) assert.equal(cssVars[name.replace(/_/g, '-')]?.toLowerCase(), value, name);
+  assert.equal(cssVars.font, tokens.font.family);
+  tokens.space.forEach((value, index) => assert.equal(cssVars[`space-${index + 1}`], `${value}px`));
+  for (const [name, value] of Object.entries(tokens.radius)) assert.equal(cssVars[`radius-${name}`], `${value}px`);
+  for (const [name, value] of Object.entries(tokens.motion)) assert.equal(cssVars[`motion-${name.replace(/_ms$/, '')}`], `${value}ms`);
+  // Every colour in the stylesheet comes from a token; no second font family is declared.
+  const outsideRoot = css.replace(/:root\s*\{[^}]*\}/, '');
+  assert.deepEqual(outsideRoot.match(/#[0-9a-f]{3,8}\b/gi) ?? [], []);
+  assert.doesNotMatch(css, /Georgia|\bInter\b|[^-]serif\b|italic/);
+});
+test('every text and background pair the stylesheet uses meets WCAG AA (4.5:1)', () => {
+  const pairs = [
+    ['ink', 'paper'], ['ink', 'surface'], ['ink', 'mint'], ['ink', 'line'],
+    ['muted', 'paper'], ['muted', 'surface'],
+    ['teal', 'paper'], ['teal', 'surface'], ['teal', 'mint'],
+    ['on-teal', 'teal'], ['on-teal', 'teal-hover'],
+    ['paper', 'ink'], ['mint', 'ink'], ['warning', 'paper'], ['error', 'paper'],
+  ];
+  for (const [text, background] of pairs) {
+    const ratio = contrast(cssVars[text], cssVars[background]);
+    assert.ok(ratio >= 4.5, `${text} on ${background} is ${ratio.toFixed(2)}:1`);
+  }
+});
+test('the page makes no claim the app cannot back', async () => {
+  const banned = [/up to date/i, /verified release/i, /verified public installer/i, /operational/i, /\bpause\b/i, /resume/i, /maintenance/i, /keeps itself/i,
+    /Interface concept/i, /EST\. FOR/i, /worth looking after/i, /Good things take care/i, /Small changes/i, /Make yourself at home/i, /only after verification/i];
+  const healthy = { schema: 1, status: 'operational', checked_at: new Date().toISOString() };
+  for (const config of [{}, { catalog: fixture, health: healthy }, { fail: true }]) {
+    const v = await mount(config);
+    for (const [os, arch] of [['windows', 'x86_64'], ['linux', 'x86_64'], ['macos', 'aarch64']]) {
+      selectPlatform(v, os, arch);
+      v.all('[data-catalog-copy]').forEach(element => element.remove());
+      const text = `${v.doc.title} ${v.$('meta[name="description"]').content} ${v.doc.body.textContent}`;
+      for (const phrase of banned) assert.doesNotMatch(text, phrase);
+    }
+    v.dom.window.close();
+  }
+  const pt = await mount({ catalog: fixture, health: healthy, languages: ['pt-BR'] });
+  selectPlatform(pt);
+  for (const phrase of [/atualizar o The Sims 4/i, /pausar/i, /manutenção/i, /versão verificada/i, /funcionando/i]) assert.doesNotMatch(pt.doc.body.textContent, phrase);
+  pt.dom.window.close();
+});
+test('catalogs that still say "verified" render downloads; contradictory ones are refused', async () => {
+  const old = structuredClone(fixture);
+  delete old.downloads[0].offered;
+  old.downloads[0].verified = true;
+  const v = await mount({ catalog: old });
+  selectPlatform(v);
+  assert.equal(v.$('#download-link').hidden, false);
+  assert.equal(v.$('#download-link').href, fixture.downloads[0].url);
+  v.dom.window.close();
+  const hidden = structuredClone(old);
+  hidden.downloads[0].verified = false;
+  const h = await mount({ catalog: hidden });
+  selectPlatform(h);
+  assert.equal(h.$('#download-link').hidden, true);
+  assert.match(h.$('#download-reason').textContent, /No installer is offered/);
+  h.dom.window.close();
+  for (const downloads of [[{ ...fixture.downloads[0], verified: false }], [{ ...old.downloads[0], verified: undefined }]]) {
+    const bad = await mount({ catalog: { ...fixture, downloads } });
+    selectPlatform(bad);
+    assert.equal(bad.$('#download-link').hasAttribute('href'), false);
+    assert.match(bad.$('#download-state').textContent, /unavailable/);
+    bad.dom.window.close();
+  }
+});
+test('a Windows download says the installer is unsigned', async () => {
+  const catalog = structuredClone(fixture);
+  catalog.downloads = [{ os: 'windows', arch: 'x86_64', offered: true, version: 'test-1', url: 'https://downloads.example.test/setup.exe', install_script: 'https://downloads.example.test/install.ps1' }];
+  const v = await mount({ catalog });
+  selectPlatform(v, 'windows');
+  assert.match(v.$('#download-reason').textContent, /Available for Windows \(x64\)\. Windows may warn .* not code-signed/);
+  assert.match(v.$('.availability').textContent, /Available for Windows \(x64\)/);
+  v.dom.window.close();
+});
+test('the 0.1.0 note about updating itself is corrected beside it', async () => {
+  const catalog = structuredClone(fixture);
+  catalog.releases.push({ version: '0.1.0', date: '2026-11-08', notes: ['Installs for your user with one command and no administrator rights, and keeps itself up to date.'] });
+  for (const [languages, expected] of [[['en-US'], /Correction: the patcher does not update on its own/], [['pt-BR'], /Correção: o patcher não se atualiza sozinho/]]) {
+    const v = await mount({ catalog, languages });
+    const article = v.all('#release-notes article').find(item => /0\.1\.0/.test(item.textContent));
+    assert.match(article.querySelector('.correction').textContent, expected);
+    assert.equal(v.all('.correction').length, 1);
+    v.dom.window.close();
+  }
+});
+test('every piece of page copy has a Portuguese translation', async () => {
+  const texts = doc => {
+    const walker = doc.createTreeWalker(doc.body, 4);
+    const out = [];
+    let item;
+    while ((item = walker.nextNode())) if (item.textContent.trim() && !item.parentElement.closest('script,style,code,noscript,[data-catalog-copy]')) out.push(item.textContent.trim());
+    return out;
+  };
+  const en = await mount();
+  const pt = await mount({ languages: ['pt-BR'] });
+  const same = new Set(['universal', 'patcher', 'Windows', 'macOS', 'Linux', 'Intel', 'Apple silicon', '+', 'Download', '01', '02', '03', '04']);
+  const [english, portuguese] = [texts(en.doc), texts(pt.doc)];
+  assert.equal(english.length, portuguese.length);
+  english.forEach((text, index) => { if (!same.has(text)) assert.notEqual(portuguese[index], text, `untranslated: ${text}`); });
+  en.dom.window.close();
+  pt.dom.window.close();
 });

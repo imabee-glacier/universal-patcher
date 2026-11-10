@@ -165,15 +165,11 @@ fn main() {
 }
 /// Unattended runs also fetch patcher updates; failures here never block game maintenance.
 fn stage_app_update() {
-    let Ok(layout) = app::Layout::for_user() else {
-        return;
-    };
-    if !layout.launcher().is_file() {
+    let installed = app::Layout::for_user().is_ok_and(|layout| layout.launcher().is_file());
+    if !installed {
         return;
     }
-    let result = app::Source::configured(None, None)
-        .and_then(|source| app::update(&source, &layout, &Control::default()));
-    match result {
+    match app::stage_update() {
         Ok(Some(v)) => println!("Universal Patcher {v} is ready; it starts next time."),
         Ok(None) => {}
         Err(e) => eprintln!("Patcher update check failed: {e:#}"),

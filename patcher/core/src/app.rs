@@ -944,6 +944,22 @@ pub fn report_healthy() {
     }
 }
 
+/// Downloads a newer patcher release for the next start, when the patcher was installed by its
+/// installer. Returns the staged version, or `None` when this one is the newest.
+pub fn stage_update() -> Result<Option<String>> {
+    let layout = Layout::for_user()?;
+    ensure!(
+        layout.launcher().is_file(),
+        "This copy of the patcher was not installed by its installer, so it cannot update itself"
+    );
+    let source = Source::configured(None, None)?;
+    match update(&source, &layout, &Control::default())? {
+        Some(v) => Ok(Some(v)),
+        // Already downloaded earlier and still waiting for a restart.
+        None => Ok(InstallState::load(&layout)?.staged),
+    }
+}
+
 /// A staged release waiting for restart, for display.
 pub fn staged_version() -> Option<String> {
     let layout = Layout::for_user().ok()?;
