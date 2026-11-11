@@ -1,0 +1,3 @@
+Updating the entitlement component while EA Desktop is running now works: the running copy is renamed aside and the new one is used the next time EA Desktop starts.
+
+A version.dll in EA Desktop's folder that is not this patcher's component is left alone, and the patcher says so.

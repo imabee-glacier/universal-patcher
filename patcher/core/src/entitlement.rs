@@ -319,19 +319,83 @@ const SHIPPED_CATALOG: &[u8] = include_bytes!("entitlements.json");
 const PROOF_NAME: &str = "unlock-postcondition.json";
 const HOOK_NAME: &str = "unlock-hook.json";
 
-/// Copies the shipped `version.dll` into `destination_dir`. The bytes must already
-/// be a component binary. A locked destination is left in place and reported.
-pub fn place_component(bundled: &Path, destination_dir: &Path) -> Result<(), &'static str> {
+/// Marker every build of the component carries: the name of the file it records its hook in.
+const COMPONENT_MARKER: &[u8] = HOOK_NAME.as_bytes();
+
+/// Whether `bytes` are a build of this patcher's component, as opposed to another program's
+/// `version.dll`.
+fn is_component(bytes: &[u8]) -> bool {
+    bytes.get(..2) == Some(b"MZ")
+        && bytes
+            .windows(COMPONENT_MARKER.len())
+            .any(|window| window == COMPONENT_MARKER)
+}
+
+/// Places the shipped `version.dll` into `destination_dir` and returns its path.
+///
+/// An existing file that is not a build of this component is never replaced
+/// (`component-foreign`). One that is, but is loaded by a running program and so cannot be
+/// deleted, is renamed to `version.dll.superseded`; the new file takes effect the next time
+/// that program starts. `component-access` means the rights to write there are missing.
+pub fn place_component(bundled: &Path, destination_dir: &Path) -> Result<PathBuf, &'static str> {
     let bytes = fs::read(bundled).map_err(|_| "component-missing")?;
     if bytes.len() < 64 || bytes.get(..2) != Some(b"MZ") {
+        install_log("component-invalid");
         return Err("component-invalid");
     }
-    let dest = destination_dir.join("version.dll");
-    if fs::read(&dest).ok().as_deref() == Some(bytes.as_slice()) {
-        return Ok(());
+    let denied = |error: &std::io::Error| error.kind() == std::io::ErrorKind::PermissionDenied;
+    let installed = destination_dir.join("version.dll");
+    let aside = destination_dir.join("version.dll.superseded");
+    let existing = fs::read(&installed).ok();
+    if existing.as_deref() == Some(bytes.as_slice()) {
+        install_log(&format!("already-installed {}", installed.display()));
+        return Ok(installed);
     }
-    fs::copy(bundled, &dest).map_err(|_| "component-replace")?;
-    Ok(())
+    if let Some(old) = &existing
+        && !is_component(old)
+    {
+        install_log("component-foreign: an unrecognised version.dll is already there");
+        return Err("component-foreign");
+    }
+    let _ = fs::remove_file(&aside);
+    let temporary = destination_dir.join("version.dll.new");
+    if let Err(error) = fs::write(&temporary, &bytes) {
+        install_log(&format!("write {error}"));
+        let _ = fs::remove_file(&temporary);
+        return Err(if denied(&error) {
+            "component-access"
+        } else {
+            "component-write"
+        });
+    }
+    let mut moved_aside = false;
+    if existing.is_some() && fs::remove_file(&installed).is_err() {
+        if let Err(error) = fs::rename(&installed, &aside) {
+            install_log(&format!("replace {error}"));
+            let _ = fs::remove_file(&temporary);
+            return Err(if denied(&error) {
+                "component-access"
+            } else {
+                "component-replace"
+            });
+        }
+        moved_aside = true;
+        install_log("the loaded component was renamed to version.dll.superseded");
+    }
+    if let Err(error) = fs::rename(&temporary, &installed) {
+        install_log(&format!("rename {error}"));
+        if moved_aside {
+            let _ = fs::rename(&aside, &installed);
+        }
+        let _ = fs::remove_file(&temporary);
+        return Err(if denied(&error) {
+            "component-access"
+        } else {
+            "component-replace"
+        });
+    }
+    install_log(&format!("installed {}", installed.display()));
+    Ok(installed)
 }
 
 #[cfg(all(windows, target_arch = "x86_64"))]
@@ -362,9 +426,7 @@ fn ea_desktop_dir() -> Option<PathBuf> {
     None
 }
 
-/// Installs the component that ships beside this program into the EA Desktop
-/// directory, so EA Desktop loads it on its next start.
-#[cfg(all(windows, target_arch = "x86_64"))]
+/// Appends one line to the component install log under the local application data folder.
 fn install_log(line: &str) {
     let Some(root) = std::env::var_os("LOCALAPPDATA") else {
         return;
@@ -393,54 +455,18 @@ fn bundled_component() -> Result<PathBuf, &'static str> {
         .join("version.dll"))
 }
 
-/// Writes the component beside EA Desktop with this process's own rights.
-/// `component-access` means Windows refused the write for lack of rights.
+/// Installs the component that ships beside this program into the EA Desktop directory, so
+/// EA Desktop loads it on its next start, using this process's own rights.
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub fn install_windows_component_here() -> Result<PathBuf, &'static str> {
     let bundled = bundled_component()?;
     install_log(&format!("bundled {}", bundled.display()));
-    let destination = match ea_desktop_dir() {
-        Some(dir) => dir,
-        None => {
-            install_log("ea-desktop-missing");
-            return Err("ea-desktop-missing");
-        }
+    let Some(destination) = ea_desktop_dir() else {
+        install_log("ea-desktop-missing");
+        return Err("ea-desktop-missing");
     };
     install_log(&format!("destination {}", destination.display()));
-    let bytes = fs::read(&bundled).map_err(|_| "component-missing")?;
-    if bytes.len() < 64 || bytes.get(..2) != Some(b"MZ") {
-        install_log("component-invalid");
-        return Err("component-invalid");
-    }
-    let installed = destination.join("version.dll");
-    if fs::read(&installed).ok().as_deref() == Some(bytes.as_slice()) {
-        install_log(&format!("already-installed {}", installed.display()));
-        return Ok(installed);
-    }
-    let denied = |error: &std::io::Error| error.kind() == std::io::ErrorKind::PermissionDenied;
-    let temporary = destination.join("version.dll.new");
-    if let Err(error) = fs::write(&temporary, &bytes) {
-        install_log(&format!("write {error}"));
-        return Err(if denied(&error) {
-            "component-access"
-        } else {
-            "component-write"
-        });
-    }
-    if installed.exists()
-        && let Err(error) = fs::remove_file(&installed)
-    {
-        install_log(&format!("remove {error}"));
-        let _ = fs::remove_file(&temporary);
-        return Err("component-replace");
-    }
-    if let Err(error) = fs::rename(&temporary, &installed) {
-        install_log(&format!("rename {error}"));
-        let _ = fs::remove_file(&temporary);
-        return Err("component-replace");
-    }
-    install_log(&format!("installed {}", installed.display()));
-    Ok(installed)
+    place_component(&bundled, &destination)
 }
 
 /// Runs `patcher-engine install-component` through the Windows permission prompt and waits

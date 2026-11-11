@@ -1590,6 +1590,9 @@ impl Service {
             Err("component-replace") => "EA Desktop is using the entitlement component. Close \
                  EA Desktop and open the patcher again."
                 .into(),
+            Err("component-foreign") => "EA Desktop already has a different version.dll, so the \
+                 entitlement component was not installed. Nothing was changed."
+                .into(),
             Err("component-access") => "The entitlement component needs Windows permission to be \
                  placed beside EA Desktop. Open the patcher again and allow the prompt."
                 .into(),
