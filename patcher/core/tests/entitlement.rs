@@ -455,6 +455,45 @@ fn component_is_copied_into_the_destination_directory() {
     place_component(&bundled, &dest).unwrap();
 }
 
+fn component_bytes(tag: u8) -> Vec<u8> {
+    let mut bytes = b"MZ".to_vec();
+    bytes.extend(std::iter::repeat_n(tag, 62));
+    bytes.extend_from_slice(b"unlock-hook.json");
+    bytes
+}
+
+#[test]
+fn an_older_build_of_the_component_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundled = dir.path().join("new.dll");
+    let dest = dir.path().join("EA Desktop");
+    fs::create_dir(&dest).unwrap();
+    fs::write(&bundled, component_bytes(2)).unwrap();
+    fs::write(dest.join("version.dll"), component_bytes(1)).unwrap();
+    let placed = place_component(&bundled, &dest).unwrap();
+    assert_eq!(placed, dest.join("version.dll"));
+    assert_eq!(fs::read(&placed).unwrap(), component_bytes(2));
+    assert!(!dest.join("version.dll.new").exists());
+}
+
+#[test]
+fn another_programs_version_dll_is_never_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundled = dir.path().join("new.dll");
+    let dest = dir.path().join("EA Desktop");
+    fs::create_dir(&dest).unwrap();
+    fs::write(&bundled, component_bytes(2)).unwrap();
+    let mut foreign = b"MZ".to_vec();
+    foreign.extend(std::iter::repeat_n(9, 200));
+    fs::write(dest.join("version.dll"), &foreign).unwrap();
+    assert_eq!(
+        place_component(&bundled, &dest).unwrap_err(),
+        "component-foreign"
+    );
+    assert_eq!(fs::read(dest.join("version.dll")).unwrap(), foreign);
+    assert!(!dest.join("version.dll.new").exists());
+}
+
 #[test]
 fn unmapped_selected_pack_fails_closed_and_is_not_enabled() {
     let dir = tempfile::tempdir().unwrap();

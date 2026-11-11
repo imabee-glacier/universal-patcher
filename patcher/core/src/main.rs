@@ -63,6 +63,9 @@ enum Command {
     },
     /// Report detected installations and every location checked.
     Discover,
+    /// Place the entitlement component beside EA Desktop (needs administrator rights).
+    #[command(hide = true)]
+    InstallComponent,
     /// Install the latest release for this user (used by install.sh and install.ps1).
     Install {
         /// Download origin; defaults to the one built into this engine.
@@ -363,6 +366,16 @@ fn execute() -> Result<()> {
                 .block_on(patcher_core::health::write(&origin, &output))?;
             println!("Service status: {status}");
             anyhow::ensure!(status == "operational", "Service is {status}");
+        }
+        Command::InstallComponent => {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                let path = patcher_core::entitlement::install_windows_component_here()
+                    .map_err(|reason| anyhow::anyhow!("Component not installed: {reason}"))?;
+                println!("Entitlement component installed at {}.", path.display());
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            anyhow::bail!("The entitlement component is installed on Windows only.");
         }
         Command::Discover => {
             let probe = patcher_core::discovery::Probe::this_system();
