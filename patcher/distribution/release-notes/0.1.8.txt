@@ -1,0 +1,3 @@
+On Windows the window no longer opens blank. The interface now draws without Flutter's Impeller renderer, which showed nothing on some graphics cards.
+
+The Windows build is checked against a snapshot taken from a real Sims 4 installation, so the main screen and its Play button are drawn from real pack data.

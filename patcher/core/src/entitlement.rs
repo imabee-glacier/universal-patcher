@@ -389,6 +389,7 @@ pub fn install_windows_component() -> Result<PathBuf, &'static str> {
         .map_err(|_| "component-missing")?
         .parent()
         .ok_or("component-missing")?
+        .join("component")
         .join("version.dll");
     install_log(&format!("bundled {}", bundled.display()));
     let destination = match ea_desktop_dir() {
