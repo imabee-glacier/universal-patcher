@@ -469,35 +469,35 @@ pub fn install_windows_component_here() -> Result<PathBuf, &'static str> {
     place_component(&bundled, &destination)
 }
 
-/// Runs `patcher-engine install-component` through the Windows permission prompt and waits
-/// for it. The prompt is the only way to write under Program Files; it is shown at most once
-/// per process, however many times the install is requested.
+/// Runs the windowless launcher's `install-component` task through the Windows permission
+/// prompt. The prompt is the only way to write under Program Files; it is shown at most once
+/// per run, however many times the install is requested.
 #[cfg(all(windows, target_arch = "x86_64"))]
 fn install_component_elevated() -> Result<(), &'static str> {
     use std::os::windows::ffi::OsStrExt;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use windows_sys::Win32::{
-        Foundation::CloseHandle,
-        System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject},
+        Foundation::{CloseHandle, WAIT_OBJECT_0},
+        System::Threading::{GetExitCodeProcess, WaitForSingleObject},
         UI::{
             Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::SW_HIDE,
         },
     };
-    static ASKED: AtomicBool = AtomicBool::new(false);
-    if ASKED.swap(true, Ordering::SeqCst) {
-        return Err("component-access");
-    }
-    let engine = std::env::current_exe()
+    // The windowless launcher is elevated, not the console engine, so no console window
+    // appears behind the permission prompt. The wait is bounded so an unanswered prompt
+    // never keeps this thread alive indefinitely; the elevated install still completes on
+    // its own if the person answers later.
+    const WAIT_MS: u32 = 180_000;
+    let helper = std::env::current_exe()
         .map_err(|_| "component-missing")?
-        .with_file_name("patcher-engine.exe");
-    if !engine.is_file() {
-        install_log("elevation: patcher-engine.exe missing");
+        .with_file_name("patcher-launch.exe");
+    if !helper.is_file() {
+        install_log("elevation: patcher-launch.exe missing");
         return Err("component-access");
     }
     let wide = |text: &std::ffi::OsStr| -> Vec<u16> { text.encode_wide().chain([0]).collect() };
     let verb = wide("runas".as_ref());
-    let file = wide(engine.as_os_str());
+    let file = wide(helper.as_os_str());
     let parameters = wide("install-component".as_ref());
     let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
     info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
@@ -515,8 +515,9 @@ fn install_component_elevated() -> Result<(), &'static str> {
     let mut code = 1u32;
     // SAFETY: `hProcess` is the process handle returned above and is closed once.
     unsafe {
-        WaitForSingleObject(info.hProcess, INFINITE);
-        GetExitCodeProcess(info.hProcess, &mut code);
+        if WaitForSingleObject(info.hProcess, WAIT_MS) == WAIT_OBJECT_0 {
+            GetExitCodeProcess(info.hProcess, &mut code);
+        }
         CloseHandle(info.hProcess);
     }
     install_log(&format!("elevation: finished with code {code}"));
@@ -531,11 +532,27 @@ fn install_component_elevated() -> Result<(), &'static str> {
 pub fn install_windows_component() -> Result<PathBuf, &'static str> {
     match install_windows_component_here() {
         Err("component-access") => {
-            install_component_elevated()?;
-            install_windows_component_here()
+            request_background_elevation();
+            Err("component-access")
         }
         other => other,
     }
+}
+
+/// Asks Windows for permission and installs the component on a background thread, once per
+/// run. It returns at once so discovery and the window never wait on the prompt.
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn request_background_elevation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        if install_component_elevated().is_ok() {
+            let _ = install_windows_component_here();
+        }
+    });
 }
 
 /// Pack offer and tag records shipped with the patcher. These are game catalog

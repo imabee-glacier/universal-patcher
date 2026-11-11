@@ -157,6 +157,7 @@ pub trait Host: Send + Sync {
 pub struct SystemHost;
 
 fn spawn_detached(mut command: std::process::Command) -> Result<()> {
+    crate::app::no_window(&mut command);
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

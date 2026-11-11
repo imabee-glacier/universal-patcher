@@ -6,10 +6,21 @@
 use patcher_core::app;
 
 fn main() {
-    let result = app::Layout::for_user().and_then(|layout| {
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        app::launch(&layout, &args, app::STARTUP_CHECK)
-    });
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Elevated, windowless component install. The engine asks Windows to run this launcher
+    // with administrator rights so the entitlement component can be written beside EA Desktop
+    // without a console window appearing. The result is reported through the exit code.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if args.len() == 1 && args[0] == "install-component" {
+        std::process::exit(
+            match patcher_core::entitlement::install_windows_component_here() {
+                Ok(_) => 0,
+                Err(_) => 1,
+            },
+        );
+    }
+    let result =
+        app::Layout::for_user().and_then(|layout| app::launch(&layout, &args, app::STARTUP_CHECK));
     let message = match result {
         Ok(app::Launched::Started(_)) => return,
         Ok(app::Launched::RolledBack { failed, running }) => format!(
