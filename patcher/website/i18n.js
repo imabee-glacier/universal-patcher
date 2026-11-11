@@ -1,5 +1,15 @@
 // English source copy is the fallback. Only our own interface copy is translated here.
 const portuguese = {
+  '{shown} of {total} packs': '{shown} de {total} pacotes',
+"Packs": "Pacotes",
+"Pack catalog": "Cat\u00e1logo de pacotes",
+"Browse the packs recognized by the patcher. Open the desktop app to see installed status, size on disk and missing files on your computer.": "Veja os pacotes reconhecidos pelo patcher. Abra o aplicativo para ver o estado de instala\u00e7\u00e3o, o tamanho em disco e os arquivos ausentes no seu computador.",
+"Search packs": "Buscar pacotes",
+"Loading pack catalog\u2026": "Carregando cat\u00e1logo de pacotes\u2026",
+"Platform availability": "Disponibilidade por plataforma",
+"Published installers and their availability.": "Instaladores publicados e sua disponibilidade.",
+"Pack catalog unavailable. Please try again later.": "Cat\u00e1logo indispon\u00edvel. Tente novamente mais tarde.",
+
   'Universal Patcher for The Sims 4': 'Universal Patcher para The Sims 4',
   'Universal Patcher finds The Sims 4 on your computer, lists your packs, and starts the game. It does not download, update or unlock game content.': 'O Universal Patcher encontra o The Sims 4 no seu computador, lista seus pacotes e inicia o jogo. Ele não baixa, atualiza nem desbloqueia conteúdo do jogo.',
   'Skip to content': 'Pular para o conteúdo',

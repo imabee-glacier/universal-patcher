@@ -1,7 +1,7 @@
 import { language, t, translatePage, localized } from './i18n.js';
 // Presentation only. Release and installer URLs come from the promoted catalog.
-// The empty checked-in catalog deliberately advertises no supported platform. Pack listings in a
-// catalog are accepted but not shown: this site distributes no game content.
+// Download availability comes only from the promoted catalog. The reference pack list
+// describes recognized packs, never local installation state or download authorization.
 const $ = (selector) => document.querySelector(selector);
 const all = (selector) => [...document.querySelectorAll(selector)];
 let catalog = { downloads: [], packs: [], releases: [] };
@@ -46,7 +46,7 @@ export function validCatalog(data) {
       if (!item.install_script.endsWith(item.os === 'windows' ? '.ps1' : '.sh')) return false;
     }
     return true;
-  }) && data.releases.every(item => item && text(item.version) && Number.isFinite(Date.parse(item.date)) && Array.isArray(item.notes) && item.notes.every(text));
+  }) && data.packs.every(item => item && ['id', 'name', 'kind'].every(key => text(item[key]))) && data.releases.every(item => item && text(item.version) && Number.isFinite(Date.parse(item.date)) && Array.isArray(item.notes) && item.notes.every(text));
 }
 function node(tag, className, text) {
   const result = document.createElement(tag);
@@ -169,7 +169,7 @@ getJSON('data/catalog.json').then(data => {
   if (!validCatalog(data)) throw new Error('Invalid catalog');
   catalog = data;
 }).catch(() => { catalogFailed = true; }).finally(() => {
-  renderDownload(); renderReleases();
+  renderDownload(); renderReleases(); renderListings();
 });
 // health.json records requests to the download service (front, install scripts, latest
 // patcher version, patcher metadata expiry), so the footer names that service and nothing more.
@@ -185,3 +185,38 @@ function renderHealth() {
   $('#service-status').textContent = t('{status} · Checked {date}', { status, date: checked });
 }
 getJSON('data/health.json').then(data => { health = data; renderHealth(); }).catch(() => { /* Keep the explicit unknown state; do not infer health from release data. */ });
+
+let referencePacks = [];
+function renderListings() {
+  const packs = catalog.packs.length ? catalog.packs : referencePacks;
+  const query = $('#pack-search').value.trim().toLocaleLowerCase(language);
+  const matches = packs.filter(pack => `${pack.id} ${pack.name} ${pack.kind}`.toLocaleLowerCase(language).includes(query));
+  $('#pack-list').replaceChildren();
+  $('#pack-count').textContent = packs.length ? t('{shown} of {total} packs', { shown: matches.length, total: packs.length }) : t('Pack catalog unavailable. Please try again later.');
+  for (const pack of matches) {
+    const card = node('article', 'pack-card');
+    card.dataset.catalogCopy = '';
+    card.append(node('h3', '', pack.name), node('p', '', `${pack.id} · ${pack.kind}`));
+    if (Number.isSafeInteger(pack.download_size) && pack.download_size >= 0) card.append(node('p', '', `${new Intl.NumberFormat(language).format(pack.download_size)} bytes`));
+    $('#pack-list').append(card);
+  }
+  $('#platform-list').replaceChildren();
+  for (const [os, arches] of Object.entries(gamePlatforms)) for (const arch of arches) {
+    const item = catalog.downloads.find(item => item.os === os && item.arch === arch);
+    const row = node('p');
+    const label = node('span', '', `${platformName(os, arch)} — `);
+    label.dataset.catalogCopy = '';
+    row.append(label);
+    if (item && offered(item)) {
+      const link = node('a', '', `${t('Download patcher')} · ${item.version}`);
+      link.href = safeURL(item.url);
+      row.append(link);
+    } else row.append(node('span', '', t(catalogFailed ? 'Release information is unavailable.' : 'No installer is offered for this system yet.')));
+    $('#platform-list').append(row);
+  }
+}
+$('#pack-search').addEventListener('input', renderListings);
+getJSON('data/packs.json').then(data => {
+  if (data.schema !== 1 || !Array.isArray(data.packs) || !data.packs.every(pack => pack && ['id', 'name', 'kind'].every(key => typeof pack[key] === 'string'))) throw new Error('Invalid pack reference');
+  referencePacks = data.packs;
+}).catch(() => {}).finally(renderListings);

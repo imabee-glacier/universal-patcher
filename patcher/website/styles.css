@@ -173,3 +173,7 @@ h2 { font-size: clamp(30px, 3.2vw, 44px); font-weight: 650; line-height: 1.15; l
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.pack-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; max-height:640px; overflow:auto; }
+.pack-card { padding:16px; border:1px solid var(--line); border-radius:8px; overflow-wrap:anywhere; }
+#pack-search { padding:12px; margin:16px 0; width:100%; box-sizing:border-box; font:inherit; }

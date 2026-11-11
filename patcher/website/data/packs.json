@@ -1,0 +1,535 @@
+{
+  "schema": 1,
+  "packs": [
+    {
+      "id": "EP01",
+      "name": "Get to Work",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP02",
+      "name": "Get Together",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP03",
+      "name": "City Living",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP04",
+      "name": "Cats & Dogs",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP05",
+      "name": "Seasons",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP06",
+      "name": "Get Famous",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP07",
+      "name": "Island Living",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP08",
+      "name": "Discover University",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP09",
+      "name": "Eco Lifestyle",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP10",
+      "name": "Snowy Escape",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP11",
+      "name": "Cottage Living",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP12",
+      "name": "High School Years",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP13",
+      "name": "Growing Together",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP14",
+      "name": "Horse Ranch",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP15",
+      "name": "For Rent",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP16",
+      "name": "Lovestruck",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP17",
+      "name": "Life & Death",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP18",
+      "name": "Businesses & Hobbies",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP19",
+      "name": "Enchanted by Nature",
+      "kind": "expansion"
+    },
+    {
+      "id": "EP20",
+      "name": "Adventure Awaits",
+      "kind": "expansion"
+    },
+    {
+      "id": "GP01",
+      "name": "Outdoor Retreat",
+      "kind": "game"
+    },
+    {
+      "id": "GP02",
+      "name": "Spa Day",
+      "kind": "game"
+    },
+    {
+      "id": "GP03",
+      "name": "Dine Out",
+      "kind": "game"
+    },
+    {
+      "id": "GP04",
+      "name": "Vampires",
+      "kind": "game"
+    },
+    {
+      "id": "GP05",
+      "name": "Parenthood",
+      "kind": "game"
+    },
+    {
+      "id": "GP06",
+      "name": "Jungle Adventure",
+      "kind": "game"
+    },
+    {
+      "id": "GP07",
+      "name": "StrangerVille",
+      "kind": "game"
+    },
+    {
+      "id": "GP08",
+      "name": "Realm of Magic",
+      "kind": "game"
+    },
+    {
+      "id": "GP09",
+      "name": "Journey to Batuu",
+      "kind": "game"
+    },
+    {
+      "id": "GP10",
+      "name": "Dream Home Decorator",
+      "kind": "game"
+    },
+    {
+      "id": "GP11",
+      "name": "My Wedding Stories",
+      "kind": "game"
+    },
+    {
+      "id": "GP12",
+      "name": "Werewolves",
+      "kind": "game"
+    },
+    {
+      "id": "FP01",
+      "name": "Holiday Celebration",
+      "kind": "free"
+    },
+    {
+      "id": "SP01",
+      "name": "Luxury Party",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP02",
+      "name": "Perfect Patio",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP03",
+      "name": "Cool Kitchen",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP04",
+      "name": "Spooky",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP05",
+      "name": "Movie Hangout",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP06",
+      "name": "Romantic Garden",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP07",
+      "name": "Kids Room",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP08",
+      "name": "Backyard",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP09",
+      "name": "Vintage Glamour",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP10",
+      "name": "Bowling Night",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP11",
+      "name": "Fitness",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP12",
+      "name": "Toddler",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP13",
+      "name": "Laundry Day",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP14",
+      "name": "My First Pet",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP15",
+      "name": "Moschino",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP16",
+      "name": "Tiny Living",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP17",
+      "name": "Nifty Knitting",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP18",
+      "name": "Paranormal",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP20",
+      "name": "Throwback Fit",
+      "kind": "kit"
+    },
+    {
+      "id": "SP21",
+      "name": "Country Kitchen",
+      "kind": "kit"
+    },
+    {
+      "id": "SP22",
+      "name": "Bust the Dust",
+      "kind": "kit"
+    },
+    {
+      "id": "SP23",
+      "name": "Courtyard Oasis",
+      "kind": "kit"
+    },
+    {
+      "id": "SP24",
+      "name": "Fashion Street",
+      "kind": "kit"
+    },
+    {
+      "id": "SP25",
+      "name": "Industrial Loft",
+      "kind": "kit"
+    },
+    {
+      "id": "SP26",
+      "name": "Incheon Arrivals",
+      "kind": "kit"
+    },
+    {
+      "id": "SP28",
+      "name": "Modern Menswear",
+      "kind": "kit"
+    },
+    {
+      "id": "SP29",
+      "name": "Blooming Rooms",
+      "kind": "kit"
+    },
+    {
+      "id": "SP30",
+      "name": "Carnaval Streetwear",
+      "kind": "kit"
+    },
+    {
+      "id": "SP31",
+      "name": "Decor to the Max",
+      "kind": "kit"
+    },
+    {
+      "id": "SP32",
+      "name": "Moonlight Chic",
+      "kind": "kit"
+    },
+    {
+      "id": "SP33",
+      "name": "Little Campers",
+      "kind": "kit"
+    },
+    {
+      "id": "SP34",
+      "name": "First Fits",
+      "kind": "kit"
+    },
+    {
+      "id": "SP35",
+      "name": "Desert Luxe",
+      "kind": "kit"
+    },
+    {
+      "id": "SP36",
+      "name": "Pastel Pop",
+      "kind": "kit"
+    },
+    {
+      "id": "SP37",
+      "name": "Everyday Clutter",
+      "kind": "kit"
+    },
+    {
+      "id": "SP38",
+      "name": "Simtimates Collection",
+      "kind": "kit"
+    },
+    {
+      "id": "SP39",
+      "name": "Bathroom Clutter",
+      "kind": "kit"
+    },
+    {
+      "id": "SP40",
+      "name": "Greenhouse Haven",
+      "kind": "kit"
+    },
+    {
+      "id": "SP41",
+      "name": "Basement Treasures",
+      "kind": "kit"
+    },
+    {
+      "id": "SP42",
+      "name": "Grunge Revival",
+      "kind": "kit"
+    },
+    {
+      "id": "SP43",
+      "name": "Book Nook",
+      "kind": "kit"
+    },
+    {
+      "id": "SP44",
+      "name": "Poolside Splash",
+      "kind": "kit"
+    },
+    {
+      "id": "SP45",
+      "name": "Modern Luxe",
+      "kind": "kit"
+    },
+    {
+      "id": "SP46",
+      "name": "Home Chef Hustle",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP47",
+      "name": "Castle Estate",
+      "kind": "kit"
+    },
+    {
+      "id": "SP48",
+      "name": "Goth Galore",
+      "kind": "kit"
+    },
+    {
+      "id": "SP49",
+      "name": "Crystal Creations",
+      "kind": "stuff"
+    },
+    {
+      "id": "SP50",
+      "name": "SP50",
+      "kind": "kit"
+    },
+    {
+      "id": "SP51",
+      "name": "SP51",
+      "kind": "kit"
+    },
+    {
+      "id": "SP52",
+      "name": "SP52",
+      "kind": "kit"
+    },
+    {
+      "id": "SP53",
+      "name": "SP53",
+      "kind": "kit"
+    },
+    {
+      "id": "SP54",
+      "name": "SP54",
+      "kind": "kit"
+    },
+    {
+      "id": "SP55",
+      "name": "SP55",
+      "kind": "kit"
+    },
+    {
+      "id": "SP56",
+      "name": "SP56",
+      "kind": "kit"
+    },
+    {
+      "id": "SP57",
+      "name": "SP57",
+      "kind": "kit"
+    },
+    {
+      "id": "SP58",
+      "name": "SP58",
+      "kind": "kit"
+    },
+    {
+      "id": "SP59",
+      "name": "SP59",
+      "kind": "kit"
+    },
+    {
+      "id": "SP60",
+      "name": "SP60",
+      "kind": "kit"
+    },
+    {
+      "id": "SP61",
+      "name": "SP61",
+      "kind": "kit"
+    },
+    {
+      "id": "SP62",
+      "name": "SP62",
+      "kind": "kit"
+    },
+    {
+      "id": "SP63",
+      "name": "SP63",
+      "kind": "kit"
+    },
+    {
+      "id": "SP64",
+      "name": "SP64",
+      "kind": "kit"
+    },
+    {
+      "id": "SP65",
+      "name": "SP65",
+      "kind": "kit"
+    },
+    {
+      "id": "SP66",
+      "name": "SP66",
+      "kind": "kit"
+    },
+    {
+      "id": "SP67",
+      "name": "SP67",
+      "kind": "kit"
+    },
+    {
+      "id": "SP68",
+      "name": "SP68",
+      "kind": "kit"
+    },
+    {
+      "id": "SP69",
+      "name": "SP69",
+      "kind": "kit"
+    },
+    {
+      "id": "SP70",
+      "name": "SP70",
+      "kind": "kit"
+    },
+    {
+      "id": "SP71",
+      "name": "SP71",
+      "kind": "kit"
+    },
+    {
+      "id": "SP72",
+      "name": "SP72",
+      "kind": "kit"
+    },
+    {
+      "id": "SP73",
+      "name": "SP73",
+      "kind": "kit"
+    },
+    {
+      "id": "SP74",
+      "name": "SP74",
+      "kind": "kit"
+    },
+    {
+      "id": "SP81",
+      "name": "SP81",
+      "kind": "kit"
+    }
+  ]
+}
