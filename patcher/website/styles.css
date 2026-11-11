@@ -73,9 +73,6 @@ h2 { font-size: clamp(30px, 3.2vw, 44px); font-weight: 650; line-height: 1.15; l
 .feature-num { font-size: 14px; color: var(--teal); padding-top: var(--space-1); font-variant-numeric: tabular-nums; font-weight: 600; }
 .feature-list h3 { font-size: 20px; font-weight: 600; margin-bottom: var(--space-2); }
 .feature-list p { font-size: 16px; line-height: 1.6; color: var(--muted); margin: 0; }
-.not-included { margin-top: var(--space-5); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-medium); background: var(--surface); }
-.not-included h3 { font-size: 18px; font-weight: 600; margin-bottom: var(--space-2); }
-.not-included ul { margin: 0; padding-left: var(--space-4); color: var(--muted); font-size: 16px; line-height: 1.6; }
 
 .routine { background: var(--surface); border-block: 1px solid var(--line); }
 .steps { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-7); margin: 0; padding: 0; }

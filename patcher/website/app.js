@@ -1,4 +1,4 @@
-import { language, t, translatePage, localized } from './i18n.js';
+import { language, t, translatePage } from './i18n.js';
 // Presentation only. Release and installer URLs come from the promoted catalog.
 // Download availability comes only from the promoted catalog. The reference pack list
 // describes recognized packs, never local installation state or download authorization.
@@ -88,30 +88,6 @@ function renderDownload() {
   $('.availability').textContent = available.length ? t('Available for {platforms}. In development.', { platforms: platformList(available) }) : t('In development. Check platform availability below.');
   $('.questions details:first-child p').textContent = available.length ? t('Available now: {platforms}. Universal Patcher is offered only where The Sims 4 runs: Windows and Linux on x64 computers, and macOS on Intel and Apple silicon. Other systems appear here when an installer for them is published.', { platforms: platformList(available) }) : t('Universal Patcher is offered only where The Sims 4 runs: Windows and Linux on x64 computers, and macOS on Intel and Apple silicon. No platform is offered yet.');
 }
-// Published notes are never rewritten; a note found to be wrong gets a correction shown beside it.
-const corrections = {
-  '0.1.0': 'Correction: the patcher does not update on its own. Choose Check for patcher update in Settings, or run universal-patcher update.',
-};
-function renderReleases() {
-  if (!catalog.releases.length && !catalogFailed) return;
-  const target = $('#release-notes');
-  target.replaceChildren();
-  if (catalogFailed) {
-    target.append(node('h3', '', t('Release notes are unavailable.')), node('p', '', t('Please check again when the published catalog can be reached.')));
-    return;
-  }
-  for (const release of [...catalog.releases].sort((a, b) => Date.parse(b.date) - Date.parse(a.date))) {
-    const article = node('article');
-    article.append(node('span', 'outline-tag', new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(release.date))), node('h3', '', t('Version {version}', { version: release.version })));
-    for (const note of localized(release, 'notes')) {
-      const copy = node('p', '', note);
-      copy.dataset.catalogCopy = '';
-      article.append(copy);
-    }
-    if (Object.hasOwn(corrections, release.version)) article.append(node('p', 'correction', t(corrections[release.version])));
-    target.append(article);
-  }
-}
 async function getJSON(path) {
   const response = await fetch(path, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error('Data unavailable');
@@ -169,7 +145,7 @@ getJSON('data/catalog.json').then(data => {
   if (!validCatalog(data)) throw new Error('Invalid catalog');
   catalog = data;
 }).catch(() => { catalogFailed = true; }).finally(() => {
-  renderDownload(); renderReleases(); renderListings();
+  renderDownload(); renderListings();
 });
 // health.json records requests to the download service (front, install scripts, latest
 // patcher version, patcher metadata expiry), so the footer names that service and nothing more.
