@@ -1,0 +1,3 @@
+The entitlement component is now placed beside EA Desktop. EA Desktop lives under Program Files, so Windows asks for permission once when the patcher starts. If you decline, the patcher says so and asks again the next time it starts.
+
+The component now sits in its own folder inside the patcher, so the patcher itself no longer loads it.

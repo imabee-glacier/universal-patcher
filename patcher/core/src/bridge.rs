@@ -1590,6 +1590,9 @@ impl Service {
             Err("component-replace") => "EA Desktop is using the entitlement component. Close \
                  EA Desktop and open the patcher again."
                 .into(),
+            Err("component-access") => "The entitlement component needs Windows permission to be \
+                 placed beside EA Desktop. Open the patcher again and allow the prompt."
+                .into(),
             Err(_) => "The entitlement component could not be installed.".into(),
         };
         #[cfg(not(all(windows, target_arch = "x86_64")))]

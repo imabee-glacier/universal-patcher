@@ -384,13 +384,20 @@ fn install_log(line: &str) {
 }
 
 #[cfg(all(windows, target_arch = "x86_64"))]
-pub fn install_windows_component() -> Result<PathBuf, &'static str> {
-    let bundled = std::env::current_exe()
+fn bundled_component() -> Result<PathBuf, &'static str> {
+    Ok(std::env::current_exe()
         .map_err(|_| "component-missing")?
         .parent()
         .ok_or("component-missing")?
         .join("component")
-        .join("version.dll");
+        .join("version.dll"))
+}
+
+/// Writes the component beside EA Desktop with this process's own rights.
+/// `component-access` means Windows refused the write for lack of rights.
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub fn install_windows_component_here() -> Result<PathBuf, &'static str> {
+    let bundled = bundled_component()?;
     install_log(&format!("bundled {}", bundled.display()));
     let destination = match ea_desktop_dir() {
         Some(dir) => dir,
@@ -410,10 +417,15 @@ pub fn install_windows_component() -> Result<PathBuf, &'static str> {
         install_log(&format!("already-installed {}", installed.display()));
         return Ok(installed);
     }
+    let denied = |error: &std::io::Error| error.kind() == std::io::ErrorKind::PermissionDenied;
     let temporary = destination.join("version.dll.new");
     if let Err(error) = fs::write(&temporary, &bytes) {
         install_log(&format!("write {error}"));
-        return Err("component-write");
+        return Err(if denied(&error) {
+            "component-access"
+        } else {
+            "component-write"
+        });
     }
     if installed.exists()
         && let Err(error) = fs::remove_file(&installed)
@@ -429,6 +441,75 @@ pub fn install_windows_component() -> Result<PathBuf, &'static str> {
     }
     install_log(&format!("installed {}", installed.display()));
     Ok(installed)
+}
+
+/// Runs `patcher-engine install-component` through the Windows permission prompt and waits
+/// for it. The prompt is the only way to write under Program Files; it is shown at most once
+/// per process, however many times the install is requested.
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn install_component_elevated() -> Result<(), &'static str> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject},
+        UI::{
+            Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW},
+            WindowsAndMessaging::SW_HIDE,
+        },
+    };
+    static ASKED: AtomicBool = AtomicBool::new(false);
+    if ASKED.swap(true, Ordering::SeqCst) {
+        return Err("component-access");
+    }
+    let engine = std::env::current_exe()
+        .map_err(|_| "component-missing")?
+        .with_file_name("patcher-engine.exe");
+    if !engine.is_file() {
+        install_log("elevation: patcher-engine.exe missing");
+        return Err("component-access");
+    }
+    let wide = |text: &std::ffi::OsStr| -> Vec<u16> { text.encode_wide().chain([0]).collect() };
+    let verb = wide("runas".as_ref());
+    let file = wide(engine.as_os_str());
+    let parameters = wide("install-component".as_ref());
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = file.as_ptr();
+    info.lpParameters = parameters.as_ptr();
+    info.nShow = SW_HIDE;
+    install_log("elevation: asking Windows for permission");
+    // SAFETY: `info` is fully initialised and its strings outlive the call.
+    if unsafe { ShellExecuteExW(&mut info) } == 0 || info.hProcess.is_null() {
+        install_log("elevation: declined or unavailable");
+        return Err("component-access");
+    }
+    let mut code = 1u32;
+    // SAFETY: `hProcess` is the process handle returned above and is closed once.
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        GetExitCodeProcess(info.hProcess, &mut code);
+        CloseHandle(info.hProcess);
+    }
+    install_log(&format!("elevation: finished with code {code}"));
+    if code == 0 {
+        Ok(())
+    } else {
+        Err("component-access")
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub fn install_windows_component() -> Result<PathBuf, &'static str> {
+    match install_windows_component_here() {
+        Err("component-access") => {
+            install_component_elevated()?;
+            install_windows_component_here()
+        }
+        other => other,
+    }
 }
 
 /// Pack offer and tag records shipped with the patcher. These are game catalog
