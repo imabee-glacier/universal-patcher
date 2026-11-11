@@ -16,8 +16,8 @@ configMapGenerator:
       - mutable.filter=backup-mutable.filter
 images:
   - name: patcher-front
-    newName: ghcr.io/imabee-glacier/patcher-front
-    digest: sha256:22ba84ac799c5eebe2d9bb73a12f3620ee73c759dc6ef22492b9df47929460a4
+    newName: docker.io/library/patcher-front
+    digest: sha256:ad348a3af1ec713efa5e0937f5b1fbfd5962899b9fe9523337a432d91f8094f7
   - name: patcher-cli
     newName: ghcr.io/imabee-glacier/patcher-cli
     digest: sha256:521d6aa6a57baff1a19611361fb4190e235818620f240d046af7ae61e9c9f492

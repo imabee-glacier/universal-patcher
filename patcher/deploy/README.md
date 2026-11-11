@@ -148,3 +148,12 @@ build, or a Windows installer has no Windows build. The website's
 - Encrypted Client Hello is not enabled; it needs DNS `HTTPS` records managed by Caddy.
 - Game releases: the repository root stays empty until a game release passes the platform
   checks in `AGENTS.md`. No game content is published.
+
+## Website listings deployment, 2026-11-10
+
+The listings image is pinned in `kustomization.yaml`. Registry upload failed authentication;
+this image was imported directly into the existing node's `k8s.io` containerd namespace.
+Its digest is `sha256:ad348a3af1ec713efa5e0937f5b1fbfd5962899b9fe9523337a432d91f8094f7`.
+The image must be imported on a replacement node before applying this configuration, or
+published to the registry and the image name updated. The prior registry image remains
+available for rollback. No release metadata or installers were modified.

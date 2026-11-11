@@ -7,6 +7,7 @@ const root = new URL('../', import.meta.url);
 const html = await readFile(new URL('index.html', root), 'utf8');
 const translations = (await readFile(new URL('i18n.js', root), 'utf8')).replace(/export /g, '');
 const source = translations + '\n' + (await readFile(new URL('app.js', root), 'utf8')).replace(/^import .*?;\n/, '').replace(/export function /g, 'function ');
+const packReference = JSON.parse(await readFile(new URL('data/packs.json', root), 'utf8'));
 const empty = JSON.parse(await readFile(new URL('data/catalog.json', root), 'utf8'));
 const fixture = {
   schema: 1, published_at: '2026-11-09T12:00:00Z',
@@ -28,7 +29,7 @@ async function mount({ catalog = empty, health = { schema: 1, status: 'unknown',
   if (clipboard) Object.defineProperty(dom.window.navigator, 'clipboard', { value: clipboard });
   dom.window.fetch = async (path) => {
     if (fail) throw new Error('offline');
-    return { ok: true, json: async () => structuredClone(path.includes('catalog') ? catalog : health) };
+    return { ok: true, json: async () => structuredClone(path.includes('catalog') ? catalog : path.includes('packs.json') ? packReference : health) };
   };
   dom.window.eval(source);
   await new Promise(resolve => setImmediate(resolve));
@@ -66,7 +67,7 @@ test('unpublished catalog never exposes a download or installer command for any 
   assert.match(v.$('#service-status').textContent, /unknown/);
   v.dom.window.close();
 });
-test('offered catalog drives downloads, commands, and release notes; packs are never shown', async () => {
+test('offered catalog drives downloads, commands, and release notes; pack listings', async () => {
   let copied;
   const v = await mount({ catalog: fixture, clipboard: { writeText: async value => { copied = value; } } });
   selectPlatform(v);
@@ -79,7 +80,11 @@ test('offered catalog drives downloads, commands, and release notes; packs are n
   assert.match(v.$('#copy-status').textContent, /copied/);
   assert.match(v.$('#download-reason').textContent, /Available for Linux \(x64\)/);
   assert.equal(v.$('img[src="x"]'), null, 'catalog text must not execute as HTML');
-  assert.doesNotMatch(v.doc.body.textContent, /Fixture expansion/, 'this site lists no game content');
+  assert.match(v.$('#pack-list').textContent, /Fixture expansion/);
+  v.$('#pack-search').value = 'test-kit';
+  v.$('#pack-search').dispatchEvent(new v.dom.window.Event('input'));
+  assert.doesNotMatch(v.$('#pack-list').textContent, /Fixture expansion/);
+  assert.match(v.$('#pack-count').textContent, /1 of 2/);
   assert.match(v.$('#release-notes').textContent, /Fixture release note/);
   selectPlatform(v, 'macos');
   assert.equal(v.$('#download-link').hasAttribute('href'), false, 'old URL removed on unsupported selection');
@@ -317,4 +322,14 @@ test('every piece of page copy has a Portuguese translation', async () => {
   english.forEach((text, index) => { if (!same.has(text)) assert.notEqual(portuguese[index], text, `untranslated: ${text}`); });
   en.dom.window.close();
   pt.dom.window.close();
+});
+
+test('reference packs match every named and unnamed engine entry', async () => {
+ const rust = await readFile(new URL('../core/src/local.rs', root), 'utf8');
+ const section = rust.split('const CATALOG:')[1].split('const PACK_FILES:')[0];
+ const ids = [...section.matchAll(/"((?:EP|GP|SP|FP)\d+)"/g)].map(m => m[1]);
+ assert.deepEqual(packReference.packs.map(p => p.id), ids);
+ const v = await mount();
+ assert.equal(v.all('.pack-card').length, ids.length);
+ v.dom.window.close();
 });
