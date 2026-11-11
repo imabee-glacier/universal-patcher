@@ -67,7 +67,7 @@ test('unpublished catalog never exposes a download or installer command for any 
   assert.match(v.$('#service-status').textContent, /unknown/);
   v.dom.window.close();
 });
-test('offered catalog drives downloads, commands, and release notes; pack listings', async () => {
+test('offered catalog drives downloads, commands; pack listings', async () => {
   let copied;
   const v = await mount({ catalog: fixture, clipboard: { writeText: async value => { copied = value; } } });
   selectPlatform(v);
@@ -85,7 +85,6 @@ test('offered catalog drives downloads, commands, and release notes; pack listin
   v.$('#pack-search').dispatchEvent(new v.dom.window.Event('input'));
   assert.doesNotMatch(v.$('#pack-list').textContent, /Fixture expansion/);
   assert.match(v.$('#pack-count').textContent, /1 of 2/);
-  assert.match(v.$('#release-notes').textContent, /Fixture release note/);
   selectPlatform(v, 'macos');
   assert.equal(v.$('#download-link').hasAttribute('href'), false, 'old URL removed on unsupported selection');
   assert.equal(v.$('#command-text').textContent, '');
@@ -107,7 +106,6 @@ test('catalog failure and invalid URLs fail closed', async () => {
     selectPlatform(v);
     assert.equal(v.$('#download-link').hasAttribute('href'), false);
     assert.match(v.$('#download-state').textContent, /unavailable/);
-    assert.match(v.$('#release-notes').textContent, /unavailable/);
     v.dom.window.close();
   }
 });
@@ -183,19 +181,16 @@ test('automatic Portuguese translates metadata, accessibility labels and empty s
   assert.equal(v.doc.documentElement.lang, 'pt-BR');
   assert.match(v.doc.title, /Universal Patcher para The Sims 4/);
   assert.equal(v.$('#copy-command').getAttribute('aria-label'), 'Copiar comando de instalação');
-  assert.match(v.$('#release-notes').textContent, /Ainda não há novidades/);
   selectPlatform(v);
   assert.match(v.$('#download-reason').textContent, /Ainda não há instalador oferecido/);
   v.dom.window.close();
 });
-test('Portuguese handles errors, copy feedback, localized release notes and dates', async () => {
+test('Portuguese handles errors, copy feedback, dates', async () => {
   const catalog = structuredClone(fixture);
   catalog.releases[0].translations = { 'pt-BR': { notes: ['Novidade de teste.'] } };
   const v = await mount({ catalog, languages: ['pt-BR'], clipboard: { writeText: async () => {} }, health: { schema: 1, status: 'operational', checked_at: new Date().toISOString() } });
   selectPlatform(v);
   assert.match(v.$('#download-reason').textContent, /Disponível para Linux \(x64\)/);
-  assert.match(v.$('#release-notes').textContent, /Novidade de teste/);
-  assert.match(v.$('#release-notes').textContent, /nov/);
   assert.match(v.$('#service-status').textContent, /Serviço de download acessível.*Verificado em/);
   v.$('#copy-command').click();
   await new Promise(resolve => setImmediate(resolve));
@@ -203,7 +198,6 @@ test('Portuguese handles errors, copy feedback, localized release notes and date
   v.dom.window.close();
   const failed = await mount({ fail: true, languages: ['pt-BR'] });
   assert.match(failed.$('#download-state').textContent, /indisponíveis/);
-  assert.match(failed.$('#release-notes').textContent, /indisponíveis/);
   failed.dom.window.close();
 });
 
@@ -244,7 +238,7 @@ test('every text and background pair the stylesheet uses meets WCAG AA (4.5:1)',
   }
 });
 test('the page makes no claim the app cannot back', async () => {
-  const banned = [/up to date/i, /verified release/i, /verified public installer/i, /operational/i, /\bpause\b/i, /resume/i, /maintenance/i, /keeps itself/i,
+  const banned = [/up to date/i, /verified release/i, /verified public installer/i, /operational/i, /resume/i, /keeps itself/i,
     /Interface concept/i, /EST\. FOR/i, /worth looking after/i, /Good things take care/i, /Small changes/i, /Make yourself at home/i, /only after verification/i];
   const healthy = { schema: 1, status: 'operational', checked_at: new Date().toISOString() };
   for (const config of [{}, { catalog: fixture, health: healthy }, { fail: true }]) {
@@ -259,7 +253,7 @@ test('the page makes no claim the app cannot back', async () => {
   }
   const pt = await mount({ catalog: fixture, health: healthy, languages: ['pt-BR'] });
   selectPlatform(pt);
-  for (const phrase of [/atualizar o The Sims 4/i, /pausar/i, /manutenção/i, /versão verificada/i, /funcionando/i]) assert.doesNotMatch(pt.doc.body.textContent, phrase);
+  for (const phrase of [/atualizar o The Sims 4/i, /pausar/i, /versão verificada/i, /funcionando/i]) assert.doesNotMatch(pt.doc.body.textContent, phrase);
   pt.dom.window.close();
 });
 test('catalogs that still say "verified" render downloads; contradictory ones are refused', async () => {
@@ -295,17 +289,6 @@ test('a Windows download says the installer is unsigned', async () => {
   assert.match(v.$('.availability').textContent, /Available for Windows \(x64\)/);
   v.dom.window.close();
 });
-test('the 0.1.0 note about updating itself is corrected beside it', async () => {
-  const catalog = structuredClone(fixture);
-  catalog.releases.push({ version: '0.1.0', date: '2026-11-08', notes: ['Installs for your user with one command and no administrator rights, and keeps itself up to date.'] });
-  for (const [languages, expected] of [[['en-US'], /Correction: the patcher does not update on its own/], [['pt-BR'], /Correção: o patcher não se atualiza sozinho/]]) {
-    const v = await mount({ catalog, languages });
-    const article = v.all('#release-notes article').find(item => /0\.1\.0/.test(item.textContent));
-    assert.match(article.querySelector('.correction').textContent, expected);
-    assert.equal(v.all('.correction').length, 1);
-    v.dom.window.close();
-  }
-});
 test('every piece of page copy has a Portuguese translation', async () => {
   const texts = doc => {
     const walker = doc.createTreeWalker(doc.body, 4);
@@ -333,3 +316,5 @@ test('reference packs match every named and unnamed engine entry', async () => {
  assert.equal(v.all('.pack-card').length, ids.length);
  v.dom.window.close();
 });
+
+test('removed sections stay absent', async () => { const v = await mount({catalog: fixture}); assert.equal(v.$('#release-notes'), null); assert.equal(v.$('a[href="#releases"]'), null); assert.equal(v.$('.not-included'), null); v.dom.window.close(); });

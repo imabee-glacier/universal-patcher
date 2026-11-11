@@ -27,9 +27,6 @@ await page.locator('#download-link').waitFor({ state: 'visible' });
 assert.equal(await page.textContent('#command-text'), `curl -fsSL '${origin}install.sh' | bash`);
 assert.match(await page.textContent('#download-state'), /Linux · x64/);
 const catalog = await (await page.request.get(`${origin}data/catalog.json`)).json();
-const latest = catalog.releases.at(-1);
-const notes = await page.textContent('#release-notes');
-assert.ok(notes.includes(`Version ${latest.version}`) && latest.notes.every(n => notes.includes(n)), `release notes for ${latest.version} are not shown`);
 assert.match(await page.textContent('#service-status'), /Download service reachable/);
 await page.screenshot({ path: `${shots}/site-linux.png`, fullPage: true });
 
