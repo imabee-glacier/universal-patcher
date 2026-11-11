@@ -43,7 +43,7 @@ fn required_files(os: &str) -> Result<&'static [&'static str]> {
             "patcher.exe",
             "patcher-engine.exe",
             "patcher-launch.exe",
-            "version.dll",
+            "component/version.dll",
         ]),
         _ => bail!("Packaging for {os} is not yet validated"),
     }

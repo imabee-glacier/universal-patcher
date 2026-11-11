@@ -588,7 +588,8 @@ fn windows_package_includes_the_entitlement_component() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("version.dll"), "{err}");
-    fs::write(build.join("version.dll"), b"MZ-component").unwrap();
+    fs::create_dir_all(build.join("component")).unwrap();
+    fs::write(build.join("component/version.dll"), b"MZ-component").unwrap();
     let manifest =
         distribution::package_app(&build, "1.0.0", "windows", "x64", &t.path().join("yes"))
             .unwrap();
