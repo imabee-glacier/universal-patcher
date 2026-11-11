@@ -17,7 +17,7 @@ configMapGenerator:
 images:
   - name: patcher-front
     newName: docker.io/library/patcher-front
-    digest: sha256:ad348a3af1ec713efa5e0937f5b1fbfd5962899b9fe9523337a432d91f8094f7
+    digest: sha256:ec00eec3eeac3b93044bfd12ea475a0509b16f188571f7e0de99c1aabc8933a3
   - name: patcher-cli
     newName: ghcr.io/imabee-glacier/patcher-cli
     digest: sha256:521d6aa6a57baff1a19611361fb4190e235818620f240d046af7ae61e9c9f492

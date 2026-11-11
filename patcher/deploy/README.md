@@ -157,3 +157,7 @@ Its digest is `sha256:ad348a3af1ec713efa5e0937f5b1fbfd5962899b9fe9523337a432d91f
 The image must be imported on a replacement node before applying this configuration, or
 published to the registry and the image name updated. The prior registry image remains
 available for rollback. No release metadata or installers were modified.
+
+The feature-copy restoration and release-notes removal from commit `a822751` were
+deployed at the operator’s explicit instruction before the remaining CI checks finished.
+Current node-imported image: `sha256:ec00eec3eeac3b93044bfd12ea475a0509b16f188571f7e0de99c1aabc8933a3`.
